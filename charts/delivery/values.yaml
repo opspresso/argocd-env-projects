@@ -12,6 +12,10 @@ gitops:
   authorEmail: bot@nalbam.com
   # SSM parameter of the GitHub token. It reads app repositories and pushes to the GitOps repository.
   tokenKey: /k8s/common/github/nalbam-bot/token
+# The Kubernetes API server: the Service IP and the control plane endpoints (kubectl get endpointslices -n default
+# -l kubernetes.io/service-name=kubernetes). Runner Pods reach only these private addresses, on 443.
+apiServer:
+  cidrs: []
 # The Agent Broker ServiceAccount that submits and observes Deliveries.
 broker:
   namespace: agent-broker

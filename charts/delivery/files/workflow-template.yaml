@@ -128,6 +128,10 @@ spec:
     # The file at this revision must be the one Broker validated, or the deployed settings would differ from it.
     - name: check-application
       activeDeadlineSeconds: 120
+      # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
+      automountServiceAccountToken: false
+      executor:
+        serviceAccountName: delivery-runner
       metadata:
         labels:
           opspresso.com/delivery-role: runner
@@ -171,6 +175,10 @@ spec:
       inputs:
         parameters:
           - name: image
+      # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
+      automountServiceAccountToken: false
+      executor:
+        serviceAccountName: delivery-runner
       metadata:
         labels:
           opspresso.com/delivery-role: runner
@@ -250,6 +258,10 @@ spec:
       inputs:
         parameters:
           - name: revision
+      # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
+      automountServiceAccountToken: false
+      executor:
+        serviceAccountName: delivery-runner
       metadata:
         labels:
           opspresso.com/delivery-role: runner
