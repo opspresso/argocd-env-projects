@@ -1,0 +1,15 @@
+delivery: 11111111-1111-4111-8111-111111111111
+revision: 0123456789abcdef0123456789abcdef01234567
+image:
+  repository: 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo
+  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+application:
+  runtime:
+    port: 8080
+    health: /health
+  environment:
+    replicas: 1
+    cpu: 100m
+    memory: 256Mi
+    env:
+      LOG_LEVEL: debug

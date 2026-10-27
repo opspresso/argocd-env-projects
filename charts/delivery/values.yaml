@@ -1,0 +1,18 @@
+# ECR prefix of the Project repositories: <account>.dkr.ecr.<region>.amazonaws.com/projects
+registry: ""
+# terraform-env-demo demo/8-app-delivery: the role a build assumes to push to one Project repository.
+pushRoleArn: ""
+region: ap-northeast-2
+# The cluster architecture. Nodes of eks-demo are Graviton (arm64).
+platform: linux/arm64
+gitops:
+  repository: opspresso/argocd-env-projects
+  branch: main
+  authorName: nalbam-bot
+  authorEmail: bot@nalbam.com
+  # SSM parameter of the GitHub token. It reads app repositories and pushes to the GitOps repository.
+  tokenKey: /k8s/common/github/nalbam-bot/token
+# The Agent Broker ServiceAccount that submits and observes Deliveries.
+broker:
+  namespace: agent-broker
+  serviceAccount: agent-broker

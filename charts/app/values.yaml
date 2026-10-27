@@ -1,0 +1,25 @@
+# Set by the ApplicationSet from the file path and the cluster settings (helm parameters).
+# A delivery values file cannot change them: helm parameters take precedence over value files.
+project: ""
+environment: ""
+domain: ""
+cluster: ""
+region: ap-northeast-2
+tenantSecretsRoleArn: ""
+
+# Written by the app-delivery workflow into projects/<project>/<environment>.yaml.
+delivery: ""
+revision: ""
+image:
+  repository: ""
+  digest: ""
+# Broker's normalized application.yaml: `runtime` and this environment's section.
+application:
+  runtime:
+    port: 8080
+    health: /health
+  environment:
+    replicas: 1
+    cpu: 100m
+    memory: 256Mi
+    env: {}

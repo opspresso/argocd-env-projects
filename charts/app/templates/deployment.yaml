@@ -1,0 +1,104 @@
+{{- $ns := include "app.namespace" . }}
+{{- $runtime := .Values.application.runtime }}
+{{- $env := .Values.application.environment }}
+{{- $port := required "application.runtime.port is required" $runtime.port | int }}
+{{- $health := $runtime.health | default "/health" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  namespace: {{ $ns }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+  annotations:
+    opspresso.com/revision: {{ .Values.revision | quote }}
+spec:
+  {{- if le (include "app.maxReplicas" . | int) (include "app.replicas" . | int) }}
+  replicas: {{ include "app.replicas" . }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "app.selector" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{- include "app.labels" . | nindent 8 }}
+      annotations:
+        # Each Delivery restarts the Pods, so they read the current Variables of Secret app-env.
+        opspresso.com/delivery: {{ .Values.delivery | quote }}
+        opspresso.com/revision: {{ .Values.revision | quote }}
+    spec:
+      serviceAccountName: app
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      {{- if gt (include "app.maxReplicas" . | int) 1 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "app.selector" . | nindent 14 }}
+      {{- end }}
+      containers:
+        - name: app
+          image: {{ include "app.image" . }}
+          {{- with $runtime.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $runtime.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $port }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ $port | quote }}
+            {{- range $name, $value := $env.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: app-env
+          startupProbe:
+            httpGet:
+              path: {{ $health }}
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: {{ $health }}
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: {{ $health }}
+              port: http
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: {{ $env.cpu | default "100m" | quote }}
+              memory: {{ $env.memory | default "256Mi" | quote }}
+            limits:
+              memory: {{ $env.memory | default "256Mi" | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]

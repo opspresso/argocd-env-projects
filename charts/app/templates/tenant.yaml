@@ -1,0 +1,117 @@
+{{- $ns := include "app.namespace" . }}
+{{- $path := printf "/agent-broker/%s/%s/%s" (required "cluster is required" .Values.cluster) .Values.project .Values.environment }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app
+  namespace: {{ $ns }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+# Pod Identity for bucket resources mounts its own token; the app needs no Kubernetes API token.
+automountServiceAccountToken: false
+---
+# The tenant role reads only the SSM paths that these session tags name. The broker-tenant-secret-stores
+# admission policy (argocd-env-apps charts/broker-tenants) allows the role only in namespace app-<project>-<env>
+# whose labels equal the tags, so a store cannot pose as another Project.
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: agent-broker
+  namespace: {{ $ns }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  provider:
+    aws:
+      service: ParameterStore
+      region: {{ .Values.region }}
+      role: {{ required "tenantSecretsRoleArn is required" .Values.tenantSecretsRoleArn }}
+      sessionTags:
+        - key: broker-project
+          value: {{ .Values.project | quote }}
+        - key: broker-env
+          value: {{ .Values.environment | quote }}
+---
+# Every Broker Variable of this environment becomes one key of Secret app-env.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: app-env
+  namespace: {{ $ns }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  refreshInterval: 5m
+  secretStoreRef:
+    kind: SecretStore
+    name: agent-broker
+  target:
+    name: app-env
+    creationPolicy: Owner
+  dataFrom:
+    - find:
+        path: {{ $path }}
+        name:
+          regexp: ".*"
+      rewrite:
+        - regexp:
+            source: {{ printf "^%s/" $path | quote }}
+            target: ""
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-baseline
+  namespace: {{ $ns }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+  egress:
+    - to:
+        - podSelector: {}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: broker-pool
+      ports:
+        - {protocol: TCP, port: 5432}
+    # Public HTTPS only: no instance metadata, cluster or VPC addresses.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16]
+      ports:
+        - {protocol: TCP, port: 443}
+---
+# Bounds one environment on the shared cluster. `pods` covers maxReplicas (at most 10) and one surge Pod;
+# large cpu or memory settings reach the request limits first and stop further scale-out.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant
+  namespace: {{ $ns }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.memory: 8Gi
+    pods: "12"
+    services.loadbalancers: "0"
+    services.nodeports: "0"

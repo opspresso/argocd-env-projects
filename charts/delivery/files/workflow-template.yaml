@@ -1,0 +1,428 @@
+# One Delivery: build and deploy one revision of a Project environment (agent-platform docs/APP_DELIVERY.md).
+# Agent Broker is the only submitter. Every parameter comes from Broker; the app repository only provides
+# the code, so it cannot choose where it is deployed. Cluster settings come from ConfigMap delivery-settings.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: app-delivery
+spec:
+  entrypoint: delivery
+  serviceAccountName: delivery-runner
+  activeDeadlineSeconds: 3600
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 604800
+  # Failed Pods stay until the TTL so Broker can return their logs.
+  podGC:
+    strategy: OnWorkflowSuccess
+  securityContext:
+    fsGroup: 1000
+  arguments:
+    parameters:
+      - name: delivery
+      - name: project
+      - name: environment
+      - name: repository
+      - name: ref
+      - name: applicationSha256
+      - name: application
+      - name: host
+  volumeClaimTemplates:
+    - metadata:
+        name: work
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 10Gi
+  templates:
+    - name: delivery
+      dag:
+        tasks:
+          - name: checkout
+            template: checkout
+          - name: check-application
+            template: check-application
+            depends: checkout
+          - name: test
+            template: test
+            depends: check-application
+            when: "'{{tasks.check-application.outputs.parameters.test-image}}' != ''"
+            arguments:
+              parameters:
+                - name: image
+                  value: "{{tasks.check-application.outputs.parameters.test-image}}"
+          - name: registry
+            template: registry
+            depends: "check-application && (test.Succeeded || test.Skipped)"
+            arguments:
+              parameters:
+                - name: revision
+                  value: "{{tasks.checkout.outputs.parameters.revision}}"
+          - name: build
+            template: build
+            depends: registry
+            when: "'{{tasks.registry.outputs.parameters.digest}}' == ''"
+            arguments:
+              parameters:
+                - name: revision
+                  value: "{{tasks.checkout.outputs.parameters.revision}}"
+          - name: deploy
+            template: deploy
+            depends: "build.Succeeded || build.Skipped"
+            arguments:
+              parameters:
+                - name: revision
+                  value: "{{tasks.checkout.outputs.parameters.revision}}"
+          - name: verify
+            template: verify
+            depends: deploy
+
+    # Clones the requested ref and records the commit it resolves to.
+    - name: checkout
+      serviceAccountName: delivery-git
+      activeDeadlineSeconds: 300
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            # Group-writable files let a test image that runs as another user write into the checkout.
+            umask 0002
+            git config --global credential.helper '!f() { echo username=x-access-token; printf "password=%s\n" "$(cat /var/run/delivery/github/token)"; }; f'
+            git init -q /work/src
+            git -C /work/src fetch -q --depth 1 "https://github.com/${REPOSITORY}.git" "${REF}"
+            git -C /work/src checkout -q FETCH_HEAD
+            git -C /work/src rev-parse HEAD > /work/revision
+            echo "Checked out ${REPOSITORY} ${REF} at $(cat /work/revision)"
+        env:
+          - {name: REPOSITORY, value: "{{workflow.parameters.repository}}"}
+          - {name: REF, value: "{{workflow.parameters.ref}}"}
+          - {name: HOME, value: /tmp}
+        securityContext: &unprivileged
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources: &small
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {memory: 512Mi}
+        volumeMounts:
+          - {name: work, mountPath: /work}
+          - {name: github, mountPath: /var/run/delivery/github, readOnly: true}
+      volumes: &github
+        - name: github
+          secret:
+            secretName: github-token
+            defaultMode: 0440
+      outputs:
+        parameters:
+          - name: revision
+            globalName: revision
+            valueFrom:
+              path: /work/revision
+
+    # The file at this revision must be the one Broker validated, or the deployed settings would differ from it.
+    - name: check-application
+      activeDeadlineSeconds: 120
+      metadata:
+        labels:
+          opspresso.com/delivery-role: runner
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            cd /work/src
+            if [ ! -f application.yaml ]; then echo "application.yaml is missing at this revision"; exit 1; fi
+            actual=$(sha256sum application.yaml | cut -d' ' -f1)
+            if [ "$actual" != "$APPLICATION_SHA256" ]; then
+              echo "application.yaml at this revision ($actual) differs from the one applied to Broker ($APPLICATION_SHA256). Apply it with project_apply and start a new Delivery."
+              exit 1
+            fi
+            printf '%s' "$APPLICATION" > /work/application.json
+            jq -r '.runtime.test.image // ""' /work/application.json > /work/test-image
+            jq -r '.runtime.test.command // ""' /work/application.json > /work/test.sh
+            jq -r '.runtime.build.context // "."' /work/application.json > /work/context
+            jq -r '.runtime.build.dockerfile // "Dockerfile"' /work/application.json > /work/dockerfile
+            for path in "$(cat /work/context)" "$(cat /work/context)/$(cat /work/dockerfile)"; do
+              case "/$path/" in */../*) echo "build path $path leaves the repository"; exit 1;; esac
+            done
+            echo "application.yaml matches the applied declaration"
+        env:
+          - {name: APPLICATION_SHA256, value: "{{workflow.parameters.applicationSha256}}"}
+          - {name: APPLICATION, value: "{{workflow.parameters.application}}"}
+        securityContext: *unprivileged
+        resources: *small
+        volumeMounts:
+          - {name: work, mountPath: /work}
+      outputs:
+        parameters:
+          - name: test-image
+            valueFrom:
+              path: /work/test-image
+
+    # Runs the app's own test command. The Pod has no credential and reaches only DNS and the public internet.
+    - name: test
+      activeDeadlineSeconds: 1800
+      inputs:
+        parameters:
+          - name: image
+      metadata:
+        labels:
+          opspresso.com/delivery-role: runner
+      container:
+        image: "{{inputs.parameters.image}}"
+        command: [/bin/sh, /work/test.sh]
+        workingDir: /work/src
+        env:
+          - {name: HOME, value: /tmp}
+          - {name: CI, value: "true"}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources:
+          requests: {cpu: 500m, memory: 1Gi}
+          limits: {memory: 4Gi}
+        volumeMounts:
+          - {name: work, mountPath: /work}
+
+    # Creates the Project repository and a push credential that only reaches it. An image already built for the
+    # same commit is reused: tags are immutable, so a second build of the commit could not be pushed anyway.
+    - name: registry
+      serviceAccountName: delivery-registry
+      activeDeadlineSeconds: 300
+      inputs:
+        parameters:
+          - name: revision
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            repository="projects/${PROJECT}"
+            if ! aws ecr describe-repositories --repository-names "$repository" >/dev/null 2>&1; then
+              aws ecr create-repository --repository-name "$repository" --image-tag-mutability IMMUTABLE \
+                --image-scanning-configuration scanOnPush=true >/dev/null
+              echo "Created repository $repository"
+            fi
+            aws ecr put-lifecycle-policy --repository-name "$repository" --lifecycle-policy-text \
+              '{"rules":[{"rulePriority":1,"description":"Keep the newest 50 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":50},"action":{"type":"expire"}}]}' >/dev/null
+            digest=$(aws ecr describe-images --repository-name "$repository" --image-ids "imageTag=${REVISION}" \
+              --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)
+            case "$digest" in sha256:*) echo "Reusing the image of ${REVISION}: $digest"; printf '%s' "$digest" > /work/digest; exit 0;; esac
+            : > /work/digest
+            session=$(aws sts assume-role --role-arn "$PUSH_ROLE_ARN" --role-session-name "delivery-${DELIVERY}" \
+              --tags "Key=delivery-project,Value=${PROJECT}" --duration-seconds 3600 --output json)
+            export AWS_ACCESS_KEY_ID=$(printf '%s' "$session" | jq -r .Credentials.AccessKeyId)
+            export AWS_SECRET_ACCESS_KEY=$(printf '%s' "$session" | jq -r .Credentials.SecretAccessKey)
+            export AWS_SESSION_TOKEN=$(printf '%s' "$session" | jq -r .Credentials.SessionToken)
+            password=$(aws ecr get-login-password)
+            mkdir -p /work/.docker
+            umask 077
+            printf '{"auths":{"%s":{"auth":"%s"}}}' "${REGISTRY%%/*}" "$(printf 'AWS:%s' "$password" | base64 -w0)" > /work/.docker/config.json
+            echo "Prepared a push credential for $repository"
+        env:
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: DELIVERY, value: "{{workflow.parameters.delivery}}"}
+          - {name: REVISION, value: "{{inputs.parameters.revision}}"}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: *unprivileged
+        resources: *small
+        volumeMounts:
+          - {name: work, mountPath: /work}
+      outputs:
+        parameters:
+          - name: digest
+            valueFrom:
+              path: /work/digest
+
+    # Builds the Dockerfile with rootless BuildKit for the cluster's architecture and pushes it.
+    - name: build
+      activeDeadlineSeconds: 2400
+      inputs:
+        parameters:
+          - name: revision
+      metadata:
+        labels:
+          opspresso.com/delivery-role: runner
+      container:
+        image: moby/buildkit:v0.34.1-rootless
+        command: [sh, -euc]
+        args:
+          - |
+            context="/work/src/$(cat /work/context)"
+            dockerfile="$context/$(cat /work/dockerfile)"
+            image="${REGISTRY}/${PROJECT}:${REVISION}"
+            trap 'rm -f /work/.docker/config.json' EXIT
+            buildctl-daemonless.sh build --frontend dockerfile.v0 \
+              --local "context=$context" --local "dockerfile=$(dirname "$dockerfile")" \
+              --opt "filename=$(basename "$dockerfile")" --opt "platform=${PLATFORM}" \
+              --output "type=image,name=${image},push=true" --metadata-file /work/build.json
+            digest=$(grep -o '"containerimage.digest": *"sha256:[a-f0-9]*"' /work/build.json | grep -o 'sha256:[a-f0-9]*')
+            printf '%s' "$digest" > /work/digest
+            echo "Pushed ${image}@${digest}"
+        env:
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: REVISION, value: "{{inputs.parameters.revision}}"}
+          - {name: DOCKER_CONFIG, value: /work/.docker}
+          - {name: BUILDKITD_FLAGS, value: --oci-worker-no-process-sandbox}
+          - {name: HOME, value: /home/user}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        # Rootless BuildKit needs these profiles unconfined to create its user namespace.
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          seccompProfile:
+            type: Unconfined
+          appArmorProfile:
+            type: Unconfined
+        resources:
+          requests: {cpu: "1", memory: 2Gi}
+          limits: {memory: 6Gi}
+        volumeMounts:
+          - {name: work, mountPath: /work}
+          - {name: buildkitd, mountPath: /home/user/.local/share/buildkit}
+      volumes:
+        - name: buildkitd
+          emptyDir: {}
+      outputs:
+        parameters:
+          - name: digest
+            valueFrom:
+              path: /work/digest
+
+    # Records the image and the declaration in projects/<project>/<environment>.yaml; Argo CD deploys it.
+    - name: deploy
+      serviceAccountName: delivery-git
+      activeDeadlineSeconds: 300
+      inputs:
+        parameters:
+          - name: revision
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            DIGEST=$(cat /work/digest)
+            case "$DIGEST" in sha256:*) ;; *) echo "No image digest to deploy"; exit 1;; esac
+            git config --global credential.helper '!f() { echo username=x-access-token; printf "password=%s\n" "$(cat /var/run/delivery/github/token)"; }; f'
+            git config --global user.name "$GIT_AUTHOR_NAME"
+            git config --global user.email "$GIT_AUTHOR_EMAIL"
+            git clone -q --depth 20 --branch "$GITOPS_BRANCH" "https://github.com/${GITOPS_REPOSITORY}.git" /work/gitops
+            cd /work/gitops
+            file="projects/${PROJECT}/${ENVIRONMENT}.yaml"
+            mkdir -p "projects/${PROJECT}"
+            write() {
+              { echo "# Written by the app-delivery workflow for Delivery ${DELIVERY}. Do not edit."
+                jq -n --arg delivery "$DELIVERY" --arg revision "$REVISION" --arg repository "${REGISTRY}/${PROJECT}" \
+                  --arg digest "$DIGEST" --argjson application "$APPLICATION" \
+                  '{delivery: $delivery, revision: $revision, image: {repository: $repository, digest: $digest}, application: $application}' \
+                  | yq -p json -o yaml; } > "$file"
+            }
+            write
+            git add "$file"
+            git commit -q -m "Deploy ${PROJECT} ${ENVIRONMENT} ${REVISION}" -m "Delivery ${DELIVERY}"
+            # Other Deliveries commit to the same branch; rebase onto them and push again.
+            attempt=1
+            until git push -q origin "HEAD:${GITOPS_BRANCH}"; do
+              if [ "$attempt" -ge 5 ]; then echo "Could not push after $attempt attempts"; exit 1; fi
+              attempt=$((attempt + 1))
+              git fetch -q origin "$GITOPS_BRANCH"
+              git reset -q --hard "origin/${GITOPS_BRANCH}"
+              write
+              git add "$file"
+              git commit -q -m "Deploy ${PROJECT} ${ENVIRONMENT} ${REVISION}" -m "Delivery ${DELIVERY}"
+              sleep $((attempt * 2))
+            done
+            printf '%s@%s' "${REGISTRY}/${PROJECT}" "$DIGEST" > /work/image
+            echo "Committed $file at $(git rev-parse HEAD)"
+        env:
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
+          - {name: DELIVERY, value: "{{workflow.parameters.delivery}}"}
+          - {name: APPLICATION, value: "{{workflow.parameters.application}}"}
+          - {name: REVISION, value: "{{inputs.parameters.revision}}"}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: *unprivileged
+        resources: *small
+        volumeMounts:
+          - {name: work, mountPath: /work}
+          - {name: github, mountPath: /var/run/delivery/github, readOnly: true}
+      volumes: *github
+      outputs:
+        parameters:
+          - name: image
+            globalName: image
+            valueFrom:
+              path: /work/image
+
+    # Waits until Argo CD rolled out the new image and the public host answers on the health path.
+    - name: verify
+      serviceAccountName: delivery-verify
+      activeDeadlineSeconds: 900
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            namespace="app-${PROJECT}-${ENVIRONMENT}"
+            health=$(printf '%s' "$APPLICATION" | jq -r '.runtime.health // "/health"')
+            DIGEST=$(cat /work/digest)
+            echo "Waiting for Deployment app in $namespace to run @${DIGEST}"
+            deadline=$(( $(date +%s) + 600 ))
+            while :; do
+              state=$(kubectl get deployment app -n "$namespace" -o json 2>/dev/null || true)
+              if [ -n "$state" ] && printf '%s' "$state" | jq -e --arg digest "$DIGEST" '
+                  (.spec.template.spec.containers[0].image | endswith("@" + $digest))
+                  and (.status.observedGeneration // 0) >= .metadata.generation
+                  and (.status.updatedReplicas // 0) == (.status.replicas // -1)
+                  and (.status.availableReplicas // 0) == (.status.replicas // -1)
+                  and (.status.replicas // 0) > 0' >/dev/null; then
+                break
+              fi
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                echo "The rollout did not finish in 10 minutes."
+                kubectl get pods -n "$namespace" -o wide || true
+                kubectl get events -n "$namespace" --sort-by=.lastTimestamp | tail -n 20 || true
+                exit 1
+              fi
+              sleep 10
+            done
+            url="https://${HOST}"
+            echo "Rollout finished. Checking ${url}${health}"
+            deadline=$(( $(date +%s) + 180 ))
+            until curl -fsS -o /dev/null --max-time 10 "${url}${health}"; do
+              if [ "$(date +%s)" -ge "$deadline" ]; then echo "${url}${health} did not answer with 2xx in 3 minutes"; exit 1; fi
+              sleep 5
+            done
+            printf '%s' "$url" > /work/url
+            echo "${url}${health} answered with 2xx"
+        env:
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
+          - {name: APPLICATION, value: "{{workflow.parameters.application}}"}
+          - {name: HOST, value: "{{workflow.parameters.host}}"}
+          - {name: HOME, value: /tmp}
+        securityContext: *unprivileged
+        resources: *small
+        volumeMounts:
+          - {name: work, mountPath: /work}
+      outputs:
+        parameters:
+          - name: url
+            globalName: url
+            valueFrom:
+              path: /work/url

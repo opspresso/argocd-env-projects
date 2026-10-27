@@ -1,0 +1,2 @@
+{{- /* Static: Argo's own {{ }} parameters must not pass through Helm. Cluster values come from delivery-settings. */}}
+{{ .Files.Get "files/workflow-template.yaml" }}

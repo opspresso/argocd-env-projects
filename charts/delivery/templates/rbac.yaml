@@ -1,0 +1,88 @@
+{{- /* One identity per step kind, so app code (test, build) never holds the GitHub token, AWS or Kubernetes access. */}}
+{{- range list "delivery-runner" "delivery-git" "delivery-registry" "delivery-verify" }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ . }}
+{{- end }}
+---
+# The Argo executor reports step results through WorkflowTaskResults.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: delivery-executor
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [workflowtaskresults]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: delivery-executor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: delivery-executor
+subjects:
+{{- range list "delivery-runner" "delivery-git" "delivery-registry" "delivery-verify" }}
+  - kind: ServiceAccount
+    name: {{ . }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+---
+# verify reads the rollout state of the app it deployed. Read only; Secrets are not included.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: delivery-verify
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods, events]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: delivery-verify
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: delivery-verify
+subjects:
+  - kind: ServiceAccount
+    name: delivery-verify
+    namespace: {{ .Release.Namespace }}
+---
+# Agent Broker submits Deliveries and reads their state and step logs. It cannot change a template.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-broker
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [workflows]
+    verbs: [create, get, list]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-broker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-broker
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.broker.serviceAccount }}
+    namespace: {{ .Values.broker.namespace }}

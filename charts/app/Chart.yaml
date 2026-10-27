@@ -1,0 +1,5 @@
+apiVersion: v2
+name: app
+description: One environment of an application that Agent Broker delivers
+type: application
+version: 1.0.0
