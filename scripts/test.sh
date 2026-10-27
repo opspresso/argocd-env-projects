@@ -71,5 +71,11 @@ PY
 expect "the DAG keeps the step names Broker maps" '^checkout check-application test registry build deploy verify$' "$(head -1 <<<"$tasks")"
 expect "the template takes Broker's parameters" "\['application', 'applicationSha256', 'delivery', 'environment', 'host', 'project', 'ref', 'repository'\]" "$tasks"
 
+if command -v argo >/dev/null; then
+  argo lint --offline charts/delivery/files/workflow-template.yaml >/dev/null && pass "argo lint accepts the WorkflowTemplate" || fail "argo lint accepts the WorkflowTemplate"
+else
+  echo "skip argo lint (argo CLI not installed)"
+fi
+
 if [ "$failures" -gt 0 ]; then echo "$failures check(s) failed"; exit 1; fi
 echo "all checks passed"

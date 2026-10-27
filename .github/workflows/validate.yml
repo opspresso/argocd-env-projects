@@ -21,4 +21,8 @@ jobs:
         with:
           version: v4.3.1
       - run: pip install --quiet pyyaml==6.0.3
+      - name: Install the Argo CLI
+        run: |
+          curl -fsSL -o /tmp/argo.gz https://github.com/argoproj/argo-workflows/releases/download/v4.1.6/argo-linux-amd64.gz
+          gunzip /tmp/argo.gz && install -m 0755 /tmp/argo /usr/local/bin/argo
       - run: ./scripts/test.sh
