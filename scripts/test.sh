@@ -52,10 +52,14 @@ fails "a tag instead of a digest is refused" "not a sha256 digest" app todo dev 
 fails "an invalid slug is refused" "not a Broker Project slug" app Todo dev tests/app/dev.yaml
 
 delivery=$(helm template delivery charts/delivery --namespace app-delivery \
-  --set registry=123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects --set pushRoleArn=arn:aws:iam::123456789012:role/app-delivery-push)
+  --set registry=123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects --set pushRoleArn=arn:aws:iam::123456789012:role/app-delivery-push \
+  --set 'apiServer.cidrs={172.20.0.1/32,10.10.114.40/32}')
 expect "delivery renders the WorkflowTemplate" 'kind: WorkflowTemplate' "$delivery"
 expect "Broker may submit Workflows" 'name: agent-broker' "$delivery"
 refuse "Helm leaves no template of its own" '\{\{ *\.' "$delivery"
+expect "runner Pods reach the API server on 443" 'cidr: 172.20.0.1/32' "$delivery"
+fails "the API server address is required" "apiServer.cidrs is required" \
+  helm template delivery charts/delivery --namespace app-delivery --set registry=x/projects --set pushRoleArn=arn:aws:iam::1:role/p
 expect "Argo parameters reach the WorkflowTemplate" '\{\{workflow\.parameters\.project\}\}' "$delivery"
 tasks=$(python3 - <<'PY'
 import yaml
@@ -65,6 +69,9 @@ print(" ".join(task["name"] for task in dag))
 names = {t["name"]: t for t in spec["templates"]}
 for task in ("test", "build", "check-application"):
     assert names[task].get("serviceAccountName") is None, task  # runs as delivery-runner without credentials
+    # Only the executor holds the token; the step's own code cannot read it.
+    assert names[task].get("automountServiceAccountToken") is False, task
+    assert names[task]["executor"]["serviceAccountName"] == "delivery-runner", task
 print(sorted(p["name"] for p in spec["arguments"]["parameters"]))
 PY
 )

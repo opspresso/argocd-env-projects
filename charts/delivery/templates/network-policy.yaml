@@ -1,4 +1,5 @@
-# test and build run the app's code. They reach DNS and the public internet only: no cluster service,
+# test and build run the app's code. They reach DNS, the Kubernetes API server (the Argo executor reports
+# step results there; the code itself holds no token) and the public internet only: no other cluster service,
 # Broker pool, VPC address or metadata endpoint.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -17,6 +18,14 @@ spec:
       ports:
         - {protocol: UDP, port: 53}
         - {protocol: TCP, port: 53}
+    - to:
+        {{- if not .Values.apiServer.cidrs }}{{ fail "apiServer.cidrs is required" }}{{ end }}
+        {{- range .Values.apiServer.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - {protocol: TCP, port: 443}
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
