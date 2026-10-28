@@ -1,0 +1,43 @@
+# Written by the app-delivery workflow for Delivery 1b734b9b-1149-4304-adfa-3f913ed58f14. Do not edit.
+delivery: 1b734b9b-1149-4304-adfa-3f913ed58f14
+revision: 4df2a47f5bb1a9f29e772eb8d790b4d092597632
+app:
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/e2e-hello@sha256:4740b7d4791b4fd41f8fa5df82577af79d35f389b5c604536fb30c54c2adda8d
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    targetPort: 8080
+  env:
+    - name: PORT
+      value: "8080"
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  podAnnotations:
+    opspresso.com/delivery: 1b734b9b-1149-4304-adfa-3f913ed58f14
+    opspresso.com/revision: 4df2a47f5bb1a9f29e772eb8d790b4d092597632
