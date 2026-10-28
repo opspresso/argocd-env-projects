@@ -23,7 +23,7 @@ This repository is the GitOps home of the apps that Agent Broker delivers. The c
   cluster values reach the steps through ConfigMap `delivery-settings`.
 - Keep the DAG task names (`checkout`, `check-application`, `test`, `registry`, `build`, `deploy`, `verify`) and the
   workflow parameters stable: Agent Broker submits the template and maps failed tasks to Delivery steps.
-- Steps that run app code (`test`, `build`) get no GitHub token, AWS identity or Kubernetes permission.
+- Steps that run app code (`test`, `build`) get no Git credential, AWS identity or Kubernetes permission.
 
 ## Validation
 

@@ -10,8 +10,12 @@ gitops:
   branch: main
   authorName: nalbam-bot
   authorEmail: bot@nalbam.com
-  # SSM parameter of the GitHub token. It reads app repositories and pushes to the GitOps repository.
-  tokenKey: /k8s/common/github/nalbam-bot/token
+  # SSM parameter of the private key of a deploy key with write access to the GitOps repository only.
+  deployKeyKey: /k8s/common/app-delivery/gitops-deploy-key
+  # github.com SSH host keys from https://api.github.com/meta.
+  knownHosts:
+    - github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+    - github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
 # The Kubernetes API server: the Service IP and the control plane endpoints (kubectl get endpointslices -n default
 # -l kubernetes.io/service-name=kubernetes). Runner Pods reach only these private addresses, on 443.
 apiServer:

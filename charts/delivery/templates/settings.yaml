@@ -13,18 +13,30 @@ data:
   GIT_AUTHOR_NAME: {{ .Values.gitops.authorName | quote }}
   GIT_AUTHOR_EMAIL: {{ .Values.gitops.authorEmail | quote }}
 ---
+# The private key of the write deploy key of the GitOps repository (deploy step only).
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: github-token
+  name: gitops-deploy-key
 spec:
   refreshInterval: 1h
   secretStoreRef:
     kind: ClusterSecretStore
     name: parameter-store
   target:
-    name: github-token
+    name: gitops-deploy-key
   data:
-    - secretKey: token
+    - secretKey: key
       remoteRef:
-        key: {{ .Values.gitops.tokenKey | quote }}
+        key: {{ required "gitops.deployKeyKey is required" .Values.gitops.deployKeyKey | quote }}
+---
+# GitHub's published SSH host keys (https://api.github.com/meta), so the deploy step verifies the server.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: delivery-known-hosts
+data:
+  known_hosts: |
+    {{- range .Values.gitops.knownHosts }}
+    {{ . }}
+    {{- end }}
