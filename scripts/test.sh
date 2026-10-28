@@ -101,7 +101,7 @@ for task in ("test", "build", "check-application"):
 readers = sorted(n for n, t in names.items() if "-checkout" in yaml.safe_dump(t.get("container", {}).get("env", [])))
 assert readers == ["checkout"], readers
 script = names["checkout"]["container"]["args"][0]
-assert "x-access-token" not in script.split("extraheader")[0] and "@github.com" not in script, "token stays out of the URL"
+assert "@github.com" not in script and "x-access-token:%s@" not in script, "token stays out of the URL"
 assert "git config" not in script and "--global" not in script, "token is not stored"
 print(sorted(p["name"] for p in spec["arguments"]["parameters"]))
 PY
