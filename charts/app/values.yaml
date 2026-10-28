@@ -23,3 +23,6 @@ application:
     cpu: 100m
     memory: 256Mi
     env: {}
+# The cluster DNS Service IP (kube-dns). EKS Auto Mode answers DNS there instead of from kube-system Pods.
+dns:
+  cidrs: [172.20.0.10/32]

@@ -29,6 +29,7 @@ expect "plain env is set" 'name: LOG_LEVEL' "$dev"
 expect "Variables come from app-env" 'name: app-env' "$dev"
 expect "SecretStore tags the Project" 'value: "todo"' "$dev"
 expect "ExternalSecret reads this environment" 'path: /agent-broker/eks-demo/todo/dev$' "$dev"
+expect "apps reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$dev"
 refuse "one replica has no HPA" 'kind: HorizontalPodAutoscaler' "$dev"
 refuse "one replica has no PDB" 'kind: PodDisruptionBudget' "$dev"
 expect "one replica sets replicas" 'replicas: 1' "$dev"
@@ -58,6 +59,7 @@ expect "delivery renders the WorkflowTemplate" 'kind: WorkflowTemplate' "$delive
 expect "Broker may submit Workflows" 'name: agent-broker' "$delivery"
 refuse "Helm leaves no template of its own" '\{\{ *\.' "$delivery"
 expect "the runner executor has its token Secret" 'name: delivery-runner.service-account-token' "$delivery"
+expect "runner Pods reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$delivery"
 expect "runner Pods reach the API server on 443" 'cidr: 172.20.0.1/32' "$delivery"
 fails "the API server address is required" "apiServer.cidrs is required" \
   helm template delivery charts/delivery --namespace app-delivery --set registry=x/projects --set pushRoleArn=arn:aws:iam::1:role/p
