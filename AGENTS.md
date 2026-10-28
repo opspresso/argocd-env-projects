@@ -16,7 +16,8 @@ This repository is the GitOps home of the apps that Agent Broker delivers. The c
 ## Invariants
 
 - `charts/app` wraps the opspresso `app` chart (helm-charts), like argocd-env-apps sample-node and the agent-* services.
-  Keep it free of its own templates: tenant objects and the guard live in `app.raw.parentTemplates`.
+  Keep it free of its own templates. Declare tenant objects with `app` chart settings (`externalSecrets`,
+  `networkPolicy`, `resourceQuota`). Only the guard, which has no `app` chart setting, lives in `app.raw.parentTemplates`.
 - The ApplicationSet sets `app.tenant.*` (project, environment, domain, cluster, region, tenantSecretsRoleArn) and
   `app.routing.hosts` as Helm parameters from the file path and the cluster. The guard template refuses any other
   namespace, host or an image without a digest, so a values file can never move an app or claim another host.

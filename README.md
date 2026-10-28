@@ -8,7 +8,7 @@ Agent Broker가 배포하는 앱의 GitOps 저장소입니다. Studio Agent가 B
 
 | 경로 | 내용 | 쓰는 주체 |
 | --- | --- | --- |
-| `charts/app/` | 앱 Environment 하나의 wrapper chart. [opspresso/helm-charts](https://github.com/opspresso/helm-charts)의 `app` chart(argocd-env-apps의 sample-node·agent-*와 같은 chart)로 Deployment·Service·HTTPRoute·HPA·PDB를, `app.raw`로 SecretStore·ExternalSecret·NetworkPolicy·ResourceQuota를 만든다 | 운영자(PR) |
+| `charts/app/` | 앱 Environment 하나의 wrapper chart. [opspresso/helm-charts](https://github.com/opspresso/helm-charts)의 `app` chart(argocd-env-apps의 sample-node·agent-*와 같은 chart)의 설정으로 Deployment·Service·HTTPRoute·HPA·PDB·SecretStore·ExternalSecret·NetworkPolicy·ResourceQuota를 만든다. `app.raw`에는 namespace·host·image digest를 검사하는 guard만 둔다 | 운영자(PR) |
 | `charts/delivery/` | namespace `app-delivery`의 Argo Workflows `app-delivery` WorkflowTemplate, 단계별 ServiceAccount·RBAC, 설정 | 운영자(PR) |
 | `projects/<slug>/<env>.yaml` | Environment 하나의 `app` chart 값: 이미지 digest, 복제 수, port, env, probe, 자원. deploy 단계가 `charts/delivery/files/render.jq`로 Broker의 선언에서 만든다 | Delivery workflow만 |
 | `scripts/test.sh` | 두 chart를 Argo CD와 같은 parameter로 렌더링하고 계약을 검사한다 | |
