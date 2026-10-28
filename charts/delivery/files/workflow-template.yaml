@@ -139,7 +139,8 @@ spec:
             actual=$(sha256sum application.yaml | cut -d' ' -f1)
             if [ "$actual" != "$APPLICATION_SHA256" ]; then
               echo "application.yaml at this revision ($actual) differs from the one applied to Broker ($APPLICATION_SHA256). Apply it with project_apply and start a new Delivery."
-              exit 1
+              # Broker reports application_changed for this exit code only (agent-broker APPLICATION_CHANGED_EXIT_CODE).
+              exit 3
             fi
             printf '%s' "$APPLICATION" > /work/application.json
             jq -r '.runtime.test.image // ""' /work/application.json > /work/test-image

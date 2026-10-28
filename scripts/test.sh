@@ -80,6 +80,7 @@ print(sorted(p["name"] for p in spec["arguments"]["parameters"]))
 PY
 )
 expect "the DAG keeps the step names Broker maps" '^checkout check-application test registry build deploy verify$' "$(head -1 <<<"$tasks")"
+expect "a changed declaration exits 3 for Broker" 'exit 3' "$(cat charts/delivery/files/workflow-template.yaml)"
 expect "the template takes Broker's parameters" "\['application', 'applicationSha256', 'delivery', 'environment', 'host', 'project', 'ref', 'repository'\]" "$tasks"
 
 if command -v argo >/dev/null; then
