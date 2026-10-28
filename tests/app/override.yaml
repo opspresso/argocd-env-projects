@@ -1,0 +1,8 @@
+# A values file must not move the app: the ApplicationSet parameters override these.
+app:
+  tenant:
+    project: other
+    environment: dev
+    domain: agrt.dev
+  routing:
+    hosts: [studio.agrt.dev]

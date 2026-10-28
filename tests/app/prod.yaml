@@ -1,21 +1,62 @@
-delivery: 22222222-2222-4222-8222-222222222222
+delivery: 11111111-1111-4111-8111-111111111111
 revision: 0123456789abcdef0123456789abcdef01234567
-image:
-  repository: 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo
-  digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-application:
-  runtime:
-    port: 3000
-    health: /healthz
-    command: [node]
-    args: [server.js]
-  environment:
-    replicas: 2
+app:
+  image:
+    reference: 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
     maxReplicas: 4
-    cpu: 250m
-    memory: 512Mi
-    env: {}
-# A values file must not move the app: these are ignored or overridden by the ApplicationSet parameters.
-project: other
-environment: dev
-domain: agrt.dev
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 70
+  pdb:
+    enabled: true
+  service:
+    targetPort: 3000
+  env:
+    - name: PORT
+      value: "3000"
+  startupProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 512Mi
+  podAnnotations:
+    opspresso.com/delivery: 11111111-1111-4111-8111-111111111111
+    opspresso.com/revision: 0123456789abcdef0123456789abcdef01234567
+  command:
+    - node
+  args:
+    - server.js
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: app

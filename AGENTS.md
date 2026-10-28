@@ -15,9 +15,13 @@ This repository is the GitOps home of the apps that Agent Broker delivers. The c
 
 ## Invariants
 
-- The ApplicationSet sets `project`, `environment`, `domain`, `cluster`, `region` and `tenantSecretsRoleArn` as Helm
-  parameters from the file path and the cluster. The app chart must derive the namespace and the host from them only,
-  so a values file can never move an app or claim another host.
+- `charts/app` wraps the opspresso `app` chart (helm-charts), like argocd-env-apps sample-node and the agent-* services.
+  Keep it free of its own templates: tenant objects and the guard live in `app.raw.parentTemplates`.
+- The ApplicationSet sets `app.tenant.*` (project, environment, domain, cluster, region, tenantSecretsRoleArn) and
+  `app.routing.hosts` as Helm parameters from the file path and the cluster. The guard template refuses any other
+  namespace, host or an image without a digest, so a values file can never move an app or claim another host.
+- `charts/delivery/files/render.jq` is the only mapping from Broker's declaration to `app` chart values; the deploy step
+  and `scripts/test.sh` both use it.
 - The app chart renders only the kinds that AppProject `projects` allows. Adding a kind needs a change there too.
 - `charts/delivery/files/workflow-template.yaml` is static. Argo's `{{...}}` parameters must not pass through Helm;
   cluster values reach the steps through ConfigMap `delivery-settings`.

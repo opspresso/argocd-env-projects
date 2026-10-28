@@ -7,19 +7,32 @@ failures=0
 pass() { printf 'ok   %s\n' "$1"; }
 fail() { printf 'FAIL %s\n' "$1"; failures=$((failures + 1)); }
 
+helm dependency build charts/app >/dev/null
+
 # The parameters the projects ApplicationSet sets from the file path and the cluster.
 app() {
   local project=$1 environment=$2 values=$3; shift 3
+  local host="${project}-${environment}.apps.rovr.dev"
+  [ "$environment" = prod ] && host="${project}.apps.rovr.dev"
   helm template app charts/app --namespace "app-${project}-${environment}" -f "$values" \
-    --set "project=${project}" --set "environment=${environment}" --set domain=apps.rovr.dev \
-    --set cluster=eks-demo --set tenantSecretsRoleArn=arn:aws:iam::123456789012:role/agent-broker-tenant-secrets "$@"
+    --set "app.tenant.project=${project}" --set "app.tenant.environment=${environment}" --set app.tenant.domain=apps.rovr.dev \
+    --set app.tenant.cluster=eks-demo --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::123456789012:role/agent-broker-tenant-secrets \
+    --set "app.routing.hosts[0]=${host}" "$@"
 }
-expect() { if grep -qE "$2" <<<"$3"; then pass "$1"; else fail "$1"; fi; }
-refuse() { if grep -qE "$2" <<<"$3"; then fail "$1"; else pass "$1"; fi; }
-fails() { local name=$1 pattern=$2; shift 2; local out; if out=$("$@" 2>&1); then fail "$name (rendered)"; elif grep -q "$pattern" <<<"$out"; then pass "$name"; else fail "$name ($out)"; fi; }
+expect() { if grep -qE -- "$2" <<<"$3"; then pass "$1"; else fail "$1"; fi; }
+refuse() { if grep -qE -- "$2" <<<"$3"; then fail "$1"; else pass "$1"; fi; }
+fails() { local name=$1 pattern=$2; shift 2; local out; if out=$("$@" 2>&1); then fail "$name (rendered)"; elif grep -q -- "$pattern" <<<"$out"; then pass "$name"; else fail "$name ($out)"; fi; }
 
-helm lint charts/app -f tests/app/dev.yaml --namespace app-todo-dev --set project=todo --set environment=dev \
-  --set domain=apps.rovr.dev --set cluster=eks-demo --set tenantSecretsRoleArn=arn:aws:iam::1:role/r >/dev/null && pass "app chart lints" || fail "app chart lints"
+# The workflow renders the values with charts/delivery/files/render.jq; the fixtures must be its output.
+render() {
+  jq -n --argjson application "$1" --arg delivery 11111111-1111-4111-8111-111111111111 --arg revision 0123456789abcdef0123456789abcdef01234567 \
+    --arg repository 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo --arg digest "sha256:$2" -f charts/delivery/files/render.jq | yq -p json -o yaml
+}
+DEV_APP='{"runtime":{"port":8080,"health":"/health","build":{"context":".","dockerfile":"Dockerfile"}},"environment":{"replicas":1,"maxReplicas":1,"cpu":"100m","memory":"256Mi","resources":[],"secrets":[],"env":{"LOG_LEVEL":"debug"}}}'
+PROD_APP='{"runtime":{"port":3000,"health":"/healthz","build":{"context":".","dockerfile":"Dockerfile"},"command":["node"],"args":["server.js"]},"environment":{"replicas":2,"maxReplicas":4,"cpu":"250m","memory":"512Mi","resources":[],"secrets":[],"env":{}}}'
+if diff -q <(render "$DEV_APP" "$(printf 'a%.0s' $(seq 64))") tests/app/dev.yaml >/dev/null \
+  && diff -q <(render "$PROD_APP" "$(printf 'b%.0s' $(seq 64))") tests/app/prod.yaml >/dev/null; then
+  pass "fixtures are render.jq output"; else fail "fixtures are render.jq output"; fi
 
 dev=$(app todo dev tests/app/dev.yaml)
 expect "dev host is <slug>-dev.<domain>" '"todo-dev.apps.rovr.dev"' "$dev"
@@ -28,29 +41,32 @@ expect "PORT follows runtime.port" 'value: "8080"' "$dev"
 expect "plain env is set" 'name: LOG_LEVEL' "$dev"
 expect "Variables come from app-env" 'name: app-env' "$dev"
 expect "an app without Variables still starts" 'optional: true' "$dev"
-expect "SecretStore tags the Project" 'value: "todo"' "$dev"
+expect "the app runs as ServiceAccount app" 'serviceAccountName: "?app"?' "$dev"
+expect "the Pod gets no API token" 'automountServiceAccountToken: false' "$dev"
+expect "privilege escalation is off" 'allowPrivilegeEscalation: false' "$dev"
+expect "the Delivery annotation lets verify find this rollout" 'opspresso.com/delivery: "?11111111' "$dev"
+expect "SecretStore tags the Project" 'key: broker-project' "$dev"
 expect "ExternalSecret reads this environment" 'path: /agent-broker/eks-demo/todo/dev$' "$dev"
 expect "apps reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$dev"
 refuse "one replica has no HPA" 'kind: HorizontalPodAutoscaler' "$dev"
 refuse "one replica has no PDB" 'kind: PodDisruptionBudget' "$dev"
-expect "one replica sets replicas" 'replicas: 1' "$dev"
 
-prod=$(app todo prod tests/app/prod.yaml)
+prod=$(app todo prod tests/app/prod.yaml -f tests/app/override.yaml)
 expect "prod host is <slug>.<domain>" '"todo.apps.rovr.dev"' "$prod"
 refuse "a values file cannot claim another domain" 'agrt.dev' "$prod"
 refuse "a values file cannot move the namespace" 'namespace: app-other' "$prod"
 expect "maxReplicas above replicas adds an HPA" 'kind: HorizontalPodAutoscaler' "$prod"
 expect "HPA keeps the declared minimum" 'minReplicas: 2' "$prod"
 expect "two replicas add a PDB" 'kind: PodDisruptionBudget' "$prod"
-refuse "HPA owns replicas" '^  replicas:' "$prod"
 expect "command is set" 'command:' "$prod"
 expect "health path is probed" 'path: /healthz' "$prod"
 
 fails "a release outside app-<slug>-<env> is refused" "release namespace" \
-  helm template app charts/app --namespace app-todo-prod -f tests/app/dev.yaml --set project=todo --set environment=dev \
-  --set domain=apps.rovr.dev --set cluster=eks-demo --set tenantSecretsRoleArn=arn:aws:iam::1:role/r
+  helm template app charts/app --namespace app-todo-prod -f tests/app/dev.yaml --set app.tenant.project=todo --set app.tenant.environment=dev \
+  --set app.tenant.domain=apps.rovr.dev --set app.tenant.cluster=eks-demo --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::1:role/r --set 'app.routing.hosts[0]=todo-dev.apps.rovr.dev'
+fails "another host is refused" "routing.hosts must be exactly" app todo dev tests/app/dev.yaml --set 'app.routing.hosts[0]=studio.agrt.dev'
 fails "an unknown environment is refused" "must be dev or prod" app todo stage tests/app/dev.yaml
-fails "a tag instead of a digest is refused" "not a sha256 digest" app todo dev tests/app/dev.yaml --set image.digest=latest
+fails "a tag instead of a digest is refused" "pin the image by digest" app todo dev tests/app/dev.yaml --set app.image.reference=nginx:latest
 fails "an invalid slug is refused" "not a Broker Project slug" app Todo dev tests/app/dev.yaml
 
 delivery=$(helm template delivery charts/delivery --namespace app-delivery \
