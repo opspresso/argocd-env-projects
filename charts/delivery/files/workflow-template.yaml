@@ -392,12 +392,14 @@ spec:
             namespace="app-${PROJECT}-${ENVIRONMENT}"
             health=$(printf '%s' "$APPLICATION" | jq -r '.runtime.health // "/health"')
             DIGEST=$(cat /work/digest)
-            echo "Waiting for Deployment app in $namespace to run @${DIGEST}"
+            echo "Waiting for Deployment app in $namespace to run Delivery ${DELIVERY} @${DIGEST}"
             deadline=$(( $(date +%s) + 600 ))
             while :; do
               state=$(kubectl get deployment app -n "$namespace" -o json 2>/dev/null || true)
-              if [ -n "$state" ] && printf '%s' "$state" | jq -e --arg digest "$DIGEST" '
+              # The Delivery annotation proves that this Delivery's commit rolled out, even when the image is reused.
+              if [ -n "$state" ] && printf '%s' "$state" | jq -e --arg digest "$DIGEST" --arg delivery "$DELIVERY" '
                   (.spec.template.spec.containers[0].image | endswith("@" + $digest))
+                  and (.spec.template.metadata.annotations["opspresso.com/delivery"] == $delivery)
                   and (.status.observedGeneration // 0) >= .metadata.generation
                   and (.status.updatedReplicas // 0) == (.status.replicas // -1)
                   and (.status.availableReplicas // 0) == (.status.replicas // -1)
@@ -426,6 +428,7 @@ spec:
           - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
           - {name: APPLICATION, value: "{{workflow.parameters.application}}"}
           - {name: HOST, value: "{{workflow.parameters.host}}"}
+          - {name: DELIVERY, value: "{{workflow.parameters.delivery}}"}
           - {name: HOME, value: /tmp}
         securityContext: *unprivileged
         resources: *small
