@@ -40,3 +40,12 @@ data:
     {{- range .Values.gitops.knownHosts }}
     {{ . }}
     {{- end }}
+---
+# The values renderer of the deploy step (files/render.jq); scripts/test.sh checks charts/app against its output.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: delivery-render
+data:
+  render.jq: |
+{{ .Files.Get "files/render.jq" | indent 4 }}

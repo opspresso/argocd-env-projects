@@ -1,5 +1,9 @@
 apiVersion: v2
-name: app
-description: One environment of an application that Agent Broker delivers
+name: project
+description: One environment of an application that Agent Broker delivers, on the opspresso app chart
 type: application
-version: 1.0.0
+version: v2.0.0
+dependencies:
+  - name: app
+    repository: https://opspresso.github.io/helm-charts
+    version: "v1.7.1"

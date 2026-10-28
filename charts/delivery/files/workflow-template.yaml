@@ -295,21 +295,47 @@ spec:
             valueFrom:
               path: /work/digest
 
-    # Records the image and the declaration in projects/<project>/<environment>.yaml; Argo CD deploys it. The push
-    # uses a deploy key that can write to the GitOps repository only.
+    # Records the image and the declaration in projects/<project>/<environment>.yaml as values of charts/app (the
+    # opspresso app chart); Argo CD deploys it. The init container renders them with render.jq; the push uses a deploy
+    # key that can write to the GitOps repository only.
     - name: deploy
       serviceAccountName: delivery-git
       activeDeadlineSeconds: 300
       inputs:
         parameters:
           - name: revision
+      initContainers:
+        - name: render
+          image: alpine/k8s:1.37.1
+          command: [sh, -euc]
+          args:
+            - |
+              DIGEST=$(cat /work/digest)
+              case "$DIGEST" in sha256:*) ;; *) echo "No image digest to deploy"; exit 1;; esac
+              { echo "# Written by the app-delivery workflow for Delivery ${DELIVERY}. Do not edit."
+                jq -n --argjson application "$APPLICATION" --arg delivery "$DELIVERY" --arg revision "$REVISION" \
+                  --arg repository "${REGISTRY}/${PROJECT}" --arg digest "$DIGEST" -f /etc/delivery-render/render.jq \
+                  | yq -p json -o yaml; } > /work/values.yaml
+              printf '%s@%s' "${REGISTRY}/${PROJECT}" "$DIGEST" > /work/image
+          env:
+            - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+            - {name: DELIVERY, value: "{{workflow.parameters.delivery}}"}
+            - {name: APPLICATION, value: "{{workflow.parameters.application}}"}
+            - {name: REVISION, value: "{{inputs.parameters.revision}}"}
+            - {name: HOME, value: /tmp}
+          envFrom:
+            - configMapRef:
+                name: delivery-settings
+          securityContext: *unprivileged
+          resources: *small
+          volumeMounts:
+            - {name: work, mountPath: /work}
+            - {name: render, mountPath: /etc/delivery-render, readOnly: true}
       container:
         image: alpine/git:v2.54.0
         command: [sh, -euc]
         args:
           - |
-            DIGEST=$(cat /work/digest)
-            case "$DIGEST" in sha256:*) ;; *) echo "No image digest to deploy"; exit 1;; esac
             # ssh refuses a group-readable key, and the Secret volume is group-readable for fsGroup.
             install -m 0600 /var/run/delivery/deploy-key/key "$HOME/key"
             export GIT_SSH_COMMAND="ssh -i $HOME/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/delivery/known_hosts"
@@ -318,11 +344,9 @@ spec:
             git clone -q --depth 20 --branch "$GITOPS_BRANCH" "git@github.com:${GITOPS_REPOSITORY}.git" /work/gitops
             cd /work/gitops
             file="projects/${PROJECT}/${ENVIRONMENT}.yaml"
-            # JSON is valid YAML. Every value is one Broker validated (IDs, SHA, registry path, digest, declaration JSON).
             write() {
               mkdir -p "projects/${PROJECT}"
-              printf '# Written by the app-delivery workflow for Delivery %s. Do not edit.\n{"delivery":"%s","revision":"%s","image":{"repository":"%s","digest":"%s"},"application":%s}\n' \
-                "$DELIVERY" "$DELIVERY" "$REVISION" "${REGISTRY}/${PROJECT}" "$DIGEST" "$APPLICATION" > "$file"
+              cp /work/values.yaml "$file"
             }
             write
             git add "$file"
@@ -342,13 +366,11 @@ spec:
               git commit -q -m "Deploy ${PROJECT} ${ENVIRONMENT} ${REVISION}" -m "Delivery ${DELIVERY}"
               sleep $((attempt * 2))
             done
-            printf '%s@%s' "${REGISTRY}/${PROJECT}" "$DIGEST" > /work/image
             echo "Committed $file at $(git rev-parse HEAD)"
         env:
           - {name: PROJECT, value: "{{workflow.parameters.project}}"}
           - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
           - {name: DELIVERY, value: "{{workflow.parameters.delivery}}"}
-          - {name: APPLICATION, value: "{{workflow.parameters.application}}"}
           - {name: REVISION, value: "{{inputs.parameters.revision}}"}
           - {name: HOME, value: /tmp}
         envFrom:
@@ -374,6 +396,9 @@ spec:
         - name: known-hosts
           configMap:
             name: delivery-known-hosts
+        - name: render
+          configMap:
+            name: delivery-render
       outputs:
         parameters:
           - name: image
