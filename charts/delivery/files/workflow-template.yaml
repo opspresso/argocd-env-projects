@@ -353,7 +353,13 @@ spec:
         envFrom:
           - configMapRef:
               name: delivery-settings
-        securityContext: *unprivileged
+        # ssh needs a passwd entry for its user, and the image has one only for root. No capability is kept; the
+        # shared volume is writable through the fsGroup.
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
         resources: *small
         volumeMounts:
           - {name: work, mountPath: /work}
