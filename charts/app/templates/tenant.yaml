@@ -77,10 +77,15 @@ spec:
   egress:
     - to:
         - podSelector: {}
+    # Cluster DNS: CoreDNS Pods, or the DNS Service IP that EKS Auto Mode serves on each node.
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
+        {{- range .Values.dns.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
       ports:
         - {protocol: UDP, port: 53}
         - {protocol: TCP, port: 53}
