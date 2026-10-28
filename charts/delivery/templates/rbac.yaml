@@ -69,6 +69,7 @@ subjects:
     namespace: {{ .Release.Namespace }}
 ---
 # Agent Delivery submits Deliveries and reads their state and step logs. It cannot change a template.
+# It creates each Workflow's checkout Secret but cannot read, change or delete any Secret.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -77,6 +78,9 @@ rules:
   - apiGroups: [argoproj.io]
     resources: [workflows]
     verbs: [create, get, list]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
   - apiGroups: [""]
     resources: [pods]
     verbs: [get, list]

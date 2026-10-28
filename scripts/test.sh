@@ -76,6 +76,8 @@ delivery=$(helm template delivery charts/delivery --namespace app-delivery \
   --set registry=123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects --set pushRoleArn=arn:aws:iam::123456789012:role/app-delivery-push \
   --set 'apiServer.cidrs={172.20.0.1/32,10.10.114.40/32}')
 expect "delivery renders the WorkflowTemplate" 'kind: WorkflowTemplate' "$delivery"
+secret_verbs=$(yq 'select(.kind == "Role" and .metadata.name == "agent-delivery") | .rules[] | select(.resources[] == "secrets") | .verbs | join(",")' <<<"$delivery")
+if [ "$secret_verbs" = "create" ]; then pass "Agent Delivery may only create Secrets"; else fail "Agent Delivery may only create Secrets ($secret_verbs)"; fi
 expect "Agent Delivery may submit Workflows" 'name: agent-delivery' "$delivery"
 refuse "Helm leaves no template of its own" '\{\{ *\.' "$delivery"
 expect "the runner executor has its token Secret" 'name: delivery-runner.service-account-token' "$delivery"
