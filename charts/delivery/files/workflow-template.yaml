@@ -252,7 +252,9 @@ spec:
             valueFrom:
               path: /work/digest
 
-    # Builds the Dockerfile with rootless BuildKit for the cluster's architecture and pushes it.
+    # Builds the Dockerfile with kaniko for the cluster's architecture and pushes it. kaniko needs no user namespace
+    # or privilege (eks-demo runs Bottlerocket on EKS Auto Mode, where user namespaces are off). It runs the
+    # Dockerfile as root inside this Pod, which holds only the push credential of this Project's repository.
     - name: build
       activeDeadlineSeconds: 2400
       inputs:
@@ -266,47 +268,32 @@ spec:
         labels:
           opspresso.com/delivery-role: runner
       container:
-        image: moby/buildkit:v0.34.1-rootless
-        command: [sh, -euc]
+        image: ghcr.io/osscontainertools/kaniko:v1.29.0-debug
+        command: [/busybox/sh, -euc]
         args:
           - |
             context="/work/src/$(cat /work/context)"
             dockerfile="$context/$(cat /work/dockerfile)"
             image="${REGISTRY}/${PROJECT}:${REVISION}"
             trap 'rm -f /work/.docker/config.json' EXIT
-            buildctl-daemonless.sh build --frontend dockerfile.v0 \
-              --local "context=$context" --local "dockerfile=$(dirname "$dockerfile")" \
-              --opt "filename=$(basename "$dockerfile")" --opt "platform=${PLATFORM}" \
-              --output "type=image,name=${image},push=true" --metadata-file /work/build.json
-            digest=$(grep -o '"containerimage.digest": *"sha256:[a-f0-9]*"' /work/build.json | grep -o 'sha256:[a-f0-9]*')
-            printf '%s' "$digest" > /work/digest
-            echo "Pushed ${image}@${digest}"
+            /kaniko/executor --context "dir://$context" --dockerfile "$dockerfile" --custom-platform "${PLATFORM}" \
+              --destination "$image" --digest-file /work/digest --snapshot-mode redo
+            echo "Pushed ${image}@$(cat /work/digest)"
         env:
           - {name: PROJECT, value: "{{workflow.parameters.project}}"}
           - {name: REVISION, value: "{{inputs.parameters.revision}}"}
           - {name: DOCKER_CONFIG, value: /work/.docker}
-          - {name: BUILDKITD_FLAGS, value: --oci-worker-no-process-sandbox}
-          - {name: HOME, value: /home/user}
         envFrom:
           - configMapRef:
               name: delivery-settings
-        # Rootless BuildKit needs these profiles unconfined to create its user namespace.
         securityContext:
-          runAsUser: 1000
-          runAsGroup: 1000
-          seccompProfile:
-            type: Unconfined
-          appArmorProfile:
-            type: Unconfined
+          runAsUser: 0
+          allowPrivilegeEscalation: false
         resources:
           requests: {cpu: "1", memory: 2Gi}
           limits: {memory: 6Gi}
         volumeMounts:
           - {name: work, mountPath: /work}
-          - {name: buildkitd, mountPath: /home/user/.local/share/buildkit}
-      volumes:
-        - name: buildkitd
-          emptyDir: {}
       outputs:
         parameters:
           - name: digest
