@@ -71,9 +71,11 @@ spec:
             - name: {{ $name }}
               value: {{ $value | quote }}
             {{- end }}
+          # An app without Broker Variables has no Secret app-env: External Secrets creates none from an empty path.
           envFrom:
             - secretRef:
                 name: app-env
+                optional: true
           startupProbe:
             httpGet:
               path: {{ $health }}
