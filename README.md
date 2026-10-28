@@ -36,7 +36,7 @@ flowchart LR
 
 | 단계 | ServiceAccount | 하는 일 |
 | --- | --- | --- |
-| `checkout` | `delivery-git` | 공개 앱 저장소를 요청한 ref로 인증 없이 clone하고 commit SHA를 기록한다 |
+| `checkout` | `delivery-git` | 요청한 ref를 clone하고 commit SHA를 기록한다. Secret `<workflow>-checkout`의 token이 있으면(관리자가 허용한 비공개 저장소) github.com 요청 header로만 쓴다 |
 | `check-application` | `delivery-runner` | `application.yaml`이 Agent Delivery에 적용한 파일과 같은지 SHA-256으로 확인한다 |
 | `test` | `delivery-runner` | `runtime.test.image`에서 `runtime.test.command`를 실행한다. 없으면 건너뛴다 |
 | `registry` | `delivery-registry` | ECR repository를 만들고, 같은 commit 이미지가 있으면 재사용한다. 없으면 그 Project에만 push할 수 있는 credential을 만든다 |
