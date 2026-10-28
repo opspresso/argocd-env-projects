@@ -21,13 +21,6 @@ app:
   service:
     targetPort: 8080
 
-  # Every Broker Variable of this environment. An app without Variables has no Secret: External Secrets creates
-  # none from an empty path.
-  envFrom:
-    - secretRef:
-        name: app-env
-        optional: true
-
   routing:
     hosts: []
     httpRoute:
@@ -43,8 +36,86 @@ app:
     cluster: ""
     region: ap-northeast-2
     tenantSecretsRoleArn: ""
-    # The cluster DNS Service IP (kube-dns). EKS Auto Mode answers DNS there instead of from kube-system Pods.
-    dnsCidrs: [172.20.0.10/32]
+
+  # Every Broker Variable of this environment, from the SSM path that the tenant role may read. The role reads
+  # only the paths that the session tags name. The broker-tenant-secret-stores admission policy (argocd-env-apps
+  # charts/broker-tenants) allows the role only in namespace app-<project>-<env> whose labels equal the tags.
+  externalSecrets:
+    enabled: true
+    name: app-env
+    refreshInterval: 5m
+    secretStore:
+      enabled: true
+      name: agent-broker
+      provider:
+        aws:
+          service: ParameterStore
+          region: "{{ .Values.tenant.region }}"
+          role: '{{ required "tenant.tenantSecretsRoleArn is required" .Values.tenant.tenantSecretsRoleArn }}'
+          sessionTags:
+            - key: broker-project
+              value: "{{ .Values.tenant.project }}"
+            - key: broker-env
+              value: "{{ .Values.tenant.environment }}"
+    dataFrom:
+      - find:
+          path: "{{ printf \"/agent-broker/%s/%s/%s\" (required \"tenant.cluster is required\" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}"
+          name:
+            regexp: ".*"
+        rewrite:
+          - regexp:
+              source: "^{{ printf \"/agent-broker/%s/%s/%s\" (required \"tenant.cluster is required\" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}/"
+              target: ""
+    # An app without Variables has no Secret: External Secrets creates none from an empty path.
+    optional: true
+
+  # Default deny. Ingress from the namespace and the istio-system ingress; egress to the namespace, cluster DNS,
+  # the Broker pool PostgreSQL and public HTTPS only: no instance metadata, cluster or VPC addresses.
+  networkPolicy:
+    enabled: true
+    policyTypes: [Ingress, Egress]
+    ingress:
+      - from:
+          - podSelector: {}
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: istio-system
+    egress:
+      - to:
+          - podSelector: {}
+      # Cluster DNS: CoreDNS Pods, or the DNS Service IP (kube-dns) that EKS Auto Mode serves on each node.
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
+          - ipBlock:
+              cidr: 172.20.0.10/32
+        ports:
+          - {protocol: UDP, port: 53}
+          - {protocol: TCP, port: 53}
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: broker-pool
+        ports:
+          - {protocol: TCP, port: 5432}
+      - to:
+          - ipBlock:
+              cidr: 0.0.0.0/0
+              except: [10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16]
+        ports:
+          - {protocol: TCP, port: 443}
+
+  # Bounds one environment on the shared cluster. pods covers maxReplicas (at most 10) and one surge Pod.
+  resourceQuota:
+    enabled: true
+    hard:
+      requests.cpu: "4"
+      requests.memory: 8Gi
+      limits.memory: 8Gi
+      pods: "12"
+      services.loadbalancers: "0"
+      services.nodeports: "0"
 
   raw:
     enabled: true
@@ -59,105 +130,3 @@ app:
         {{- $host := ternary (printf "%s.%s" $t.project $t.domain) (printf "%s-%s.%s" $t.project $t.environment $t.domain) (eq $t.environment "prod") }}
         {{- if or (not $t.domain) (ne (toJson .Values.routing.hosts) (toJson (list $host))) }}{{ fail (printf "routing.hosts must be exactly [%s]" $host) }}{{ end }}
         {{- if not (regexMatch "@sha256:[a-f0-9]{64}$" (.Values.image.reference | default "")) }}{{ fail "image.reference must pin the image by digest" }}{{ end }}
-      # The tenant role reads only the SSM paths that these session tags name. The broker-tenant-secret-stores
-      # admission policy (argocd-env-apps charts/broker-tenants) allows the role only in namespace
-      # app-<project>-<env> whose labels equal the tags.
-      - |
-        apiVersion: external-secrets.io/v1
-        kind: SecretStore
-        metadata:
-          name: agent-broker
-          namespace: {{ .Release.Namespace }}
-        spec:
-          provider:
-            aws:
-              service: ParameterStore
-              region: {{ .Values.tenant.region }}
-              role: {{ required "tenant.tenantSecretsRoleArn is required" .Values.tenant.tenantSecretsRoleArn }}
-              sessionTags:
-                - key: broker-project
-                  value: {{ .Values.tenant.project | quote }}
-                - key: broker-env
-                  value: {{ .Values.tenant.environment | quote }}
-      - |
-        {{- $path := printf "/agent-broker/%s/%s/%s" (required "tenant.cluster is required" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}
-        apiVersion: external-secrets.io/v1
-        kind: ExternalSecret
-        metadata:
-          name: app-env
-          namespace: {{ .Release.Namespace }}
-        spec:
-          refreshInterval: 5m
-          secretStoreRef:
-            kind: SecretStore
-            name: agent-broker
-          target:
-            name: app-env
-            creationPolicy: Owner
-          dataFrom:
-            - find:
-                path: {{ $path }}
-                name:
-                  regexp: ".*"
-              rewrite:
-                - regexp:
-                    source: {{ printf "^%s/" $path | quote }}
-                    target: ""
-      - |
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        metadata:
-          name: tenant-baseline
-          namespace: {{ .Release.Namespace }}
-        spec:
-          podSelector: {}
-          policyTypes: [Ingress, Egress]
-          ingress:
-            - from:
-                - podSelector: {}
-                - namespaceSelector:
-                    matchLabels:
-                      kubernetes.io/metadata.name: istio-system
-          egress:
-            - to:
-                - podSelector: {}
-            # Cluster DNS: CoreDNS Pods, or the DNS Service IP that EKS Auto Mode serves on each node.
-            - to:
-                - namespaceSelector:
-                    matchLabels:
-                      kubernetes.io/metadata.name: kube-system
-                {{- range .Values.tenant.dnsCidrs }}
-                - ipBlock:
-                    cidr: {{ . }}
-                {{- end }}
-              ports:
-                - {protocol: UDP, port: 53}
-                - {protocol: TCP, port: 53}
-            - to:
-                - namespaceSelector:
-                    matchLabels:
-                      kubernetes.io/metadata.name: broker-pool
-              ports:
-                - {protocol: TCP, port: 5432}
-            # Public HTTPS only: no instance metadata, cluster or VPC addresses.
-            - to:
-                - ipBlock:
-                    cidr: 0.0.0.0/0
-                    except: [10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16]
-              ports:
-                - {protocol: TCP, port: 443}
-      # Bounds one environment on the shared cluster. pods covers maxReplicas (at most 10) and one surge Pod.
-      - |
-        apiVersion: v1
-        kind: ResourceQuota
-        metadata:
-          name: tenant
-          namespace: {{ .Release.Namespace }}
-        spec:
-          hard:
-            requests.cpu: "4"
-            requests.memory: 8Gi
-            limits.memory: 8Gi
-            pods: "12"
-            services.loadbalancers: "0"
-            services.nodeports: "0"
