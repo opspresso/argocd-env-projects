@@ -79,7 +79,8 @@ spec:
             template: verify
             depends: deploy
 
-    # Clones the requested ref and records the commit it resolves to.
+    # Clones the requested ref and records the commit it resolves to. App repositories are public, so no credential
+    # is used here.
     - name: checkout
       serviceAccountName: delivery-git
       activeDeadlineSeconds: 300
@@ -90,7 +91,6 @@ spec:
           - |
             # Group-writable files let a test image that runs as another user write into the checkout.
             umask 0002
-            git config --global credential.helper '!f() { echo username=x-access-token; printf "password=%s\n" "$(cat /var/run/delivery/github/token)"; }; f'
             git init -q /work/src
             git -C /work/src fetch -q --depth 1 "https://github.com/${REPOSITORY}.git" "${REF}"
             git -C /work/src checkout -q FETCH_HEAD
@@ -112,12 +112,6 @@ spec:
           limits: {memory: 512Mi}
         volumeMounts:
           - {name: work, mountPath: /work}
-          - {name: github, mountPath: /var/run/delivery/github, readOnly: true}
-      volumes: &github
-        - name: github
-          secret:
-            secretName: github-token
-            defaultMode: 0440
       outputs:
         parameters:
           - name: revision
@@ -300,7 +294,8 @@ spec:
             valueFrom:
               path: /work/digest
 
-    # Records the image and the declaration in projects/<project>/<environment>.yaml; Argo CD deploys it.
+    # Records the image and the declaration in projects/<project>/<environment>.yaml; Argo CD deploys it. The push
+    # uses a deploy key that can write to the GitOps repository only.
     - name: deploy
       serviceAccountName: delivery-git
       activeDeadlineSeconds: 300
@@ -308,31 +303,31 @@ spec:
         parameters:
           - name: revision
       container:
-        image: alpine/k8s:1.37.1
+        image: alpine/git:v2.54.0
         command: [sh, -euc]
         args:
           - |
             DIGEST=$(cat /work/digest)
             case "$DIGEST" in sha256:*) ;; *) echo "No image digest to deploy"; exit 1;; esac
-            git config --global credential.helper '!f() { echo username=x-access-token; printf "password=%s\n" "$(cat /var/run/delivery/github/token)"; }; f'
+            # ssh refuses a group-readable key, and the Secret volume is group-readable for fsGroup.
+            install -m 0600 /var/run/delivery/deploy-key/key "$HOME/key"
+            export GIT_SSH_COMMAND="ssh -i $HOME/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/delivery/known_hosts"
             git config --global user.name "$GIT_AUTHOR_NAME"
             git config --global user.email "$GIT_AUTHOR_EMAIL"
-            git clone -q --depth 20 --branch "$GITOPS_BRANCH" "https://github.com/${GITOPS_REPOSITORY}.git" /work/gitops
+            git clone -q --depth 20 --branch "$GITOPS_BRANCH" "git@github.com:${GITOPS_REPOSITORY}.git" /work/gitops
             cd /work/gitops
             file="projects/${PROJECT}/${ENVIRONMENT}.yaml"
+            # JSON is valid YAML. Every value is one Broker validated (IDs, SHA, registry path, digest, declaration JSON).
             write() {
               mkdir -p "projects/${PROJECT}"
-              { echo "# Written by the app-delivery workflow for Delivery ${DELIVERY}. Do not edit."
-                jq -n --arg delivery "$DELIVERY" --arg revision "$REVISION" --arg repository "${REGISTRY}/${PROJECT}" \
-                  --arg digest "$DIGEST" --argjson application "$APPLICATION" \
-                  '{delivery: $delivery, revision: $revision, image: {repository: $repository, digest: $digest}, application: $application}' \
-                  | yq -p json -o yaml; } > "$file"
+              printf '# Written by the app-delivery workflow for Delivery %s. Do not edit.\n{"delivery":"%s","revision":"%s","image":{"repository":"%s","digest":"%s"},"application":%s}\n' \
+                "$DELIVERY" "$DELIVERY" "$REVISION" "${REGISTRY}/${PROJECT}" "$DIGEST" "$APPLICATION" > "$file"
             }
             write
             git add "$file"
             git commit -q -m "Deploy ${PROJECT} ${ENVIRONMENT} ${REVISION}" -m "Delivery ${DELIVERY}"
             # Other Deliveries commit to the same branch: only a rejected (non-fast-forward) push is retried on top of
-            # theirs. Any other failure, such as a refused credential, ends the step with Git's own message.
+            # theirs. Any other failure, such as a refused key, ends the step with Git's own message.
             attempt=1
             until git push -q origin "HEAD:${GITOPS_BRANCH}" 2>/work/push.err; do
               cat /work/push.err
@@ -362,8 +357,16 @@ spec:
         resources: *small
         volumeMounts:
           - {name: work, mountPath: /work}
-          - {name: github, mountPath: /var/run/delivery/github, readOnly: true}
-      volumes: *github
+          - {name: deploy-key, mountPath: /var/run/delivery/deploy-key, readOnly: true}
+          - {name: known-hosts, mountPath: /etc/delivery, readOnly: true}
+      volumes:
+        - name: deploy-key
+          secret:
+            secretName: gitops-deploy-key
+            defaultMode: 0440
+        - name: known-hosts
+          configMap:
+            name: delivery-known-hosts
       outputs:
         parameters:
           - name: image

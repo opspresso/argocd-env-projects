@@ -36,15 +36,15 @@ flowchart LR
 
 | 단계 | ServiceAccount | 하는 일 |
 | --- | --- | --- |
-| `checkout` | `delivery-git` | 앱 저장소를 요청한 ref로 clone하고 commit SHA를 기록한다 |
+| `checkout` | `delivery-git` | 공개 앱 저장소를 요청한 ref로 인증 없이 clone하고 commit SHA를 기록한다 |
 | `check-application` | `delivery-runner` | `application.yaml`이 Broker에 적용한 파일과 같은지 SHA-256으로 확인한다 |
 | `test` | `delivery-runner` | `runtime.test.image`에서 `runtime.test.command`를 실행한다. 없으면 건너뛴다 |
 | `registry` | `delivery-registry` | ECR repository를 만들고, 같은 commit 이미지가 있으면 재사용한다. 없으면 그 Project에만 push할 수 있는 credential을 만든다 |
 | `build` | `delivery-runner` | kaniko로 linux/arm64 이미지를 빌드해 commit SHA tag로 push한다. user namespace·privileged가 필요 없다 |
-| `deploy` | `delivery-git` | `projects/<slug>/<env>.yaml`에 이미지 digest와 선언을 commit한다 |
+| `deploy` | `delivery-git` | `projects/<slug>/<env>.yaml`에 이미지 digest와 선언을 commit한다. 이 저장소에만 쓰기 권한이 있는 deploy key(SSM `/k8s/common/app-delivery/gitops-deploy-key`)로 push한다 |
 | `verify` | `delivery-verify` | rollout 완료와 `https://<host><health>`의 2xx 응답을 기다린다 |
 
-`test`·`build`는 앱 코드를 실행합니다. 이 Pod는 GitHub token·AWS·Kubernetes 권한을 받지 않고, NetworkPolicy
+`test`·`build`는 앱 코드를 실행합니다. 이 Pod는 Git 자격 증명·AWS·Kubernetes 권한을 받지 않고, NetworkPolicy
 `delivery-runner`로 DNS와 공인 인터넷에만 연결합니다.
 
 ## 앱 주소
