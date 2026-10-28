@@ -7,6 +7,16 @@ metadata:
   name: {{ . }}
 {{- end }}
 ---
+# Argo mounts this token into the executor (wait container) of the runner steps, which set
+# automountServiceAccountToken: false so the step's own code gets no token. The name is Argo's convention.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: delivery-runner.service-account-token
+  annotations:
+    kubernetes.io/service-account.name: delivery-runner
+type: kubernetes.io/service-account-token
+---
 # The Argo executor reports step results through WorkflowTaskResults.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

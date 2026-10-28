@@ -57,6 +57,7 @@ delivery=$(helm template delivery charts/delivery --namespace app-delivery \
 expect "delivery renders the WorkflowTemplate" 'kind: WorkflowTemplate' "$delivery"
 expect "Broker may submit Workflows" 'name: agent-broker' "$delivery"
 refuse "Helm leaves no template of its own" '\{\{ *\.' "$delivery"
+expect "the runner executor has its token Secret" 'name: delivery-runner.service-account-token' "$delivery"
 expect "runner Pods reach the API server on 443" 'cidr: 172.20.0.1/32' "$delivery"
 fails "the API server address is required" "apiServer.cidrs is required" \
   helm template delivery charts/delivery --namespace app-delivery --set registry=x/projects --set pushRoleArn=arn:aws:iam::1:role/p
