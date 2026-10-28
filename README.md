@@ -40,7 +40,7 @@ flowchart LR
 | `check-application` | `delivery-runner` | `application.yaml`이 Broker에 적용한 파일과 같은지 SHA-256으로 확인한다 |
 | `test` | `delivery-runner` | `runtime.test.image`에서 `runtime.test.command`를 실행한다. 없으면 건너뛴다 |
 | `registry` | `delivery-registry` | ECR repository를 만들고, 같은 commit 이미지가 있으면 재사용한다. 없으면 그 Project에만 push할 수 있는 credential을 만든다 |
-| `build` | `delivery-runner` | rootless BuildKit으로 linux/arm64 이미지를 빌드해 commit SHA tag로 push한다 |
+| `build` | `delivery-runner` | kaniko로 linux/arm64 이미지를 빌드해 commit SHA tag로 push한다. user namespace·privileged가 필요 없다 |
 | `deploy` | `delivery-git` | `projects/<slug>/<env>.yaml`에 이미지 digest와 선언을 commit한다 |
 | `verify` | `delivery-verify` | rollout 완료와 `https://<host><health>`의 2xx 응답을 기다린다 |
 
