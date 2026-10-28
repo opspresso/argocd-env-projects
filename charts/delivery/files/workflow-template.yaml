@@ -79,8 +79,10 @@ spec:
             template: verify
             depends: deploy
 
-    # Clones the requested ref and records the commit it resolves to. App repositories are public, so no credential
-    # is used here.
+    # Clones the requested ref and records the commit it resolves to. Agent Delivery writes Secret <workflow>-checkout
+    # before this step runs: an empty token clones a public repository; a token (GitHub App, contents:read on this one
+    # repository) goes only into a one-shot header for github.com. Nothing is stored in /work/src/.git, which the test and
+    # build steps read, and redirects are refused so the header never leaves github.com.
     - name: checkout
       serviceAccountName: delivery-git
       activeDeadlineSeconds: 300
@@ -92,7 +94,14 @@ spec:
             # Group-writable files let a test image that runs as another user write into the checkout.
             umask 0002
             git init -q /work/src
-            git -C /work/src fetch -q --depth 1 "https://github.com/${REPOSITORY}.git" "${REF}"
+            if [ -n "${GIT_TOKEN}" ]; then
+              header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GIT_TOKEN}" | base64 | tr -d '\n')"
+              git -C /work/src -c http.followRedirects=false -c "http.https://github.com/.extraheader=${header}" \
+                fetch -q --depth 1 "https://github.com/${REPOSITORY}.git" "${REF}"
+              unset header
+            else
+              git -C /work/src -c http.followRedirects=false fetch -q --depth 1 "https://github.com/${REPOSITORY}.git" "${REF}"
+            fi
             git -C /work/src checkout -q FETCH_HEAD
             git -C /work/src rev-parse HEAD > /work/revision
             echo "Checked out ${REPOSITORY} ${REF} at $(cat /work/revision)"
@@ -100,6 +109,8 @@ spec:
           - {name: REPOSITORY, value: "{{workflow.parameters.repository}}"}
           - {name: REF, value: "{{workflow.parameters.ref}}"}
           - {name: HOME, value: /tmp}
+          - name: GIT_TOKEN
+            valueFrom: {secretKeyRef: {name: "{{workflow.name}}-checkout", key: token}}
         securityContext: &unprivileged
           runAsUser: 1000
           runAsGroup: 1000
