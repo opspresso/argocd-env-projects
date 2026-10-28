@@ -37,40 +37,40 @@ app:
     region: ap-northeast-2
     tenantSecretsRoleArn: ""
 
-  # Every Broker Variable of this environment, from the SSM path that the tenant role may read. The role reads
-  # only the paths that the session tags name. The broker-tenant-secret-stores admission policy (argocd-env-apps
-  # charts/broker-tenants) allows the role only in namespace app-<project>-<env> whose labels equal the tags.
+  # Every Agent Delivery Variable of this environment, from the SSM path that the tenant role may read. The role reads
+  # only the paths that the session tags name. The delivery-tenant-secret-stores admission policy (argocd-env-apps
+  # charts/delivery-tenants) allows the role only in namespace app-<project>-<env> whose labels equal the tags.
   externalSecrets:
     enabled: true
     name: app-env
     refreshInterval: 5m
     secretStore:
       enabled: true
-      name: agent-broker
+      name: agent-delivery
       provider:
         aws:
           service: ParameterStore
           region: "{{ .Values.tenant.region }}"
           role: '{{ required "tenant.tenantSecretsRoleArn is required" .Values.tenant.tenantSecretsRoleArn }}'
           sessionTags:
-            - key: broker-project
+            - key: delivery-project
               value: "{{ .Values.tenant.project }}"
-            - key: broker-env
+            - key: delivery-env
               value: "{{ .Values.tenant.environment }}"
     dataFrom:
       - find:
-          path: "{{ printf \"/agent-broker/%s/%s/%s\" (required \"tenant.cluster is required\" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}"
+          path: "{{ printf \"/agent-delivery/%s/%s/%s\" (required \"tenant.cluster is required\" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}"
           name:
             regexp: ".*"
         rewrite:
           - regexp:
-              source: "^{{ printf \"/agent-broker/%s/%s/%s\" (required \"tenant.cluster is required\" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}/"
+              source: "^{{ printf \"/agent-delivery/%s/%s/%s\" (required \"tenant.cluster is required\" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}/"
               target: ""
     # An app without Variables has no Secret: External Secrets creates none from an empty path.
     optional: true
 
   # Default deny. Ingress from the namespace and the istio-system ingress; egress to the namespace, cluster DNS,
-  # the Broker pool PostgreSQL and public HTTPS only: no instance metadata, cluster or VPC addresses.
+  # the Agent Delivery pool PostgreSQL and public HTTPS only: no instance metadata, cluster or VPC addresses.
   networkPolicy:
     enabled: true
     policyTypes: [Ingress, Egress]
@@ -96,7 +96,7 @@ app:
       - to:
           - namespaceSelector:
               matchLabels:
-                kubernetes.io/metadata.name: broker-pool
+                kubernetes.io/metadata.name: delivery-pool
         ports:
           - {protocol: TCP, port: 5432}
       - to:
@@ -124,7 +124,7 @@ app:
       # and an image pinned by digest.
       - |
         {{- $t := .Values.tenant }}
-        {{- if not (regexMatch "^[a-z][a-z0-9-]{1,30}[a-z0-9]$" ($t.project | default "")) }}{{ fail (printf "tenant.project %q is not a Broker Project slug" $t.project) }}{{ end }}
+        {{- if not (regexMatch "^[a-z][a-z0-9-]{1,30}[a-z0-9]$" ($t.project | default "")) }}{{ fail (printf "tenant.project %q is not an Agent Delivery Project slug" $t.project) }}{{ end }}
         {{- if not (has $t.environment (list "dev" "prod")) }}{{ fail (printf "tenant.environment %q must be dev or prod" $t.environment) }}{{ end }}
         {{- if ne .Release.Namespace (printf "app-%s-%s" $t.project $t.environment) }}{{ fail (printf "release namespace %q must be app-%s-%s" .Release.Namespace $t.project $t.environment) }}{{ end }}
         {{- $host := ternary (printf "%s.%s" $t.project $t.domain) (printf "%s-%s.%s" $t.project $t.environment $t.domain) (eq $t.environment "prod") }}

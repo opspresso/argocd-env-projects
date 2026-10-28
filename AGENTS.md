@@ -2,7 +2,7 @@
 
 Working rules for coding agents in this repository (`CLAUDE.md` is a symlink to this file).
 
-This repository is the GitOps home of the apps that Agent Broker delivers. The contract is
+This repository is the GitOps home of the apps that Agent Delivery deploys. The contract is
 `agent-platform/docs/APP_DELIVERY.md`; [README.md](README.md) explains the layout and the Delivery steps.
 
 ## Ownership
@@ -21,13 +21,13 @@ This repository is the GitOps home of the apps that Agent Broker delivers. The c
 - The ApplicationSet sets `app.tenant.*` (project, environment, domain, cluster, region, tenantSecretsRoleArn) and
   `app.routing.hosts` as Helm parameters from the file path and the cluster. The guard template refuses any other
   namespace, host or an image without a digest, so a values file can never move an app or claim another host.
-- `charts/delivery/files/render.jq` is the only mapping from Broker's declaration to `app` chart values; the deploy step
+- `charts/delivery/files/render.jq` is the only mapping from Agent Delivery's declaration to `app` chart values; the deploy step
   and `scripts/test.sh` both use it.
 - The app chart renders only the kinds that AppProject `projects` allows. Adding a kind needs a change there too.
 - `charts/delivery/files/workflow-template.yaml` is static. Argo's `{{...}}` parameters must not pass through Helm;
   cluster values reach the steps through ConfigMap `delivery-settings`.
 - Keep the DAG task names (`checkout`, `check-application`, `test`, `registry`, `build`, `deploy`, `verify`) and the
-  workflow parameters stable: Agent Broker submits the template and maps failed tasks to Delivery steps.
+  workflow parameters stable: Agent Delivery submits the template and maps failed tasks to Delivery steps.
 - Steps that run app code (`test`, `build`) get no Git credential, AWS identity or Kubernetes permission.
 
 ## Validation

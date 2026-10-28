@@ -1,5 +1,5 @@
 # One Delivery: build and deploy one revision of a Project environment (agent-platform docs/APP_DELIVERY.md).
-# Agent Broker is the only submitter. Every parameter comes from Broker; the app repository only provides
+# Agent Delivery is the only submitter. Every parameter comes from Agent Delivery; the app repository only provides
 # the code, so it cannot choose where it is deployed. Cluster settings come from ConfigMap delivery-settings.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
@@ -12,7 +12,7 @@ spec:
   ttlStrategy:
     secondsAfterSuccess: 86400
     secondsAfterFailure: 604800
-  # Failed Pods stay until the TTL so Broker can return their logs.
+  # Failed Pods stay until the TTL so Agent Delivery can return their logs.
   podGC:
     strategy: OnWorkflowSuccess
   securityContext:
@@ -119,7 +119,7 @@ spec:
             valueFrom:
               path: /work/revision
 
-    # The file at this revision must be the one Broker validated, or the deployed settings would differ from it.
+    # The file at this revision must be the one Agent Delivery validated, or the deployed settings would differ from it.
     - name: check-application
       activeDeadlineSeconds: 120
       # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
@@ -138,8 +138,8 @@ spec:
             if [ ! -f application.yaml ]; then echo "application.yaml is missing at this revision"; exit 1; fi
             actual=$(sha256sum application.yaml | cut -d' ' -f1)
             if [ "$actual" != "$APPLICATION_SHA256" ]; then
-              echo "application.yaml at this revision ($actual) differs from the one applied to Broker ($APPLICATION_SHA256). Apply it with project_apply and start a new Delivery."
-              # Broker reports application_changed for this exit code only (agent-broker APPLICATION_CHANGED_EXIT_CODE).
+              echo "application.yaml at this revision ($actual) differs from the one applied to Agent Delivery ($APPLICATION_SHA256). Apply it with project_apply and start a new Delivery."
+              # Agent Delivery reports application_changed for this exit code only (agent-delivery APPLICATION_CHANGED_EXIT_CODE).
               exit 3
             fi
             printf '%s' "$APPLICATION" > /work/application.json

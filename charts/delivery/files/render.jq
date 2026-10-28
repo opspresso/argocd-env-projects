@@ -1,4 +1,4 @@
-# Renders projects/<project>/<environment>.yaml for charts/app (the opspresso app chart) from Broker's normalized
+# Renders projects/<project>/<environment>.yaml for charts/app (the opspresso app chart) from Agent Delivery's normalized
 # declaration. Inputs: $application (JSON {runtime, environment}), $delivery, $revision, $repository, $digest.
 ($application.runtime) as $r
 | ($application.environment) as $e
