@@ -320,8 +320,8 @@ spec:
             git clone -q --depth 20 --branch "$GITOPS_BRANCH" "https://github.com/${GITOPS_REPOSITORY}.git" /work/gitops
             cd /work/gitops
             file="projects/${PROJECT}/${ENVIRONMENT}.yaml"
-            mkdir -p "projects/${PROJECT}"
             write() {
+              mkdir -p "projects/${PROJECT}"
               { echo "# Written by the app-delivery workflow for Delivery ${DELIVERY}. Do not edit."
                 jq -n --arg delivery "$DELIVERY" --arg revision "$REVISION" --arg repository "${REGISTRY}/${PROJECT}" \
                   --arg digest "$DIGEST" --argjson application "$APPLICATION" \
@@ -331,9 +331,12 @@ spec:
             write
             git add "$file"
             git commit -q -m "Deploy ${PROJECT} ${ENVIRONMENT} ${REVISION}" -m "Delivery ${DELIVERY}"
-            # Other Deliveries commit to the same branch; rebase onto them and push again.
+            # Other Deliveries commit to the same branch: only a rejected (non-fast-forward) push is retried on top of
+            # theirs. Any other failure, such as a refused credential, ends the step with Git's own message.
             attempt=1
-            until git push -q origin "HEAD:${GITOPS_BRANCH}"; do
+            until git push -q origin "HEAD:${GITOPS_BRANCH}" 2>/work/push.err; do
+              cat /work/push.err
+              grep -qE "\[rejected\]|non-fast-forward|fetch first" /work/push.err || exit 1
               if [ "$attempt" -ge 5 ]; then echo "Could not push after $attempt attempts"; exit 1; fi
               attempt=$((attempt + 1))
               git fetch -q origin "$GITOPS_BRANCH"
