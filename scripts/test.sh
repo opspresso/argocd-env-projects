@@ -16,7 +16,7 @@ app() {
   [ "$environment" = prod ] && host="${project}.apps.rovr.dev"
   helm template app charts/app --namespace "app-${project}-${environment}" -f "$values" \
     --set "app.tenant.project=${project}" --set "app.tenant.environment=${environment}" --set app.tenant.domain=apps.rovr.dev \
-    --set app.tenant.cluster=eks-demo --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::123456789012:role/agent-broker-tenant-secrets \
+    --set app.tenant.cluster=eks-demo --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::123456789012:role/agent-delivery-tenant-secrets \
     --set "app.routing.hosts[0]=${host}" "$@"
 }
 expect() { if grep -qE -- "$2" <<<"$3"; then pass "$1"; else fail "$1"; fi; }
@@ -45,8 +45,8 @@ expect "the app runs as ServiceAccount app" 'serviceAccountName: "?app"?' "$dev"
 expect "the Pod gets no API token" 'automountServiceAccountToken: false' "$dev"
 expect "privilege escalation is off" 'allowPrivilegeEscalation: false' "$dev"
 expect "the Delivery annotation lets verify find this rollout" 'opspresso.com/delivery: "?11111111' "$dev"
-expect "SecretStore tags the Project" 'key: broker-project' "$dev"
-expect "ExternalSecret reads this environment" "path: '?/agent-broker/eks-demo/todo/dev'?$" "$dev"
+expect "SecretStore tags the Project" 'key: delivery-project' "$dev"
+expect "ExternalSecret reads this environment" "path: '?/agent-delivery/eks-demo/todo/dev'?$" "$dev"
 expect "apps reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$dev"
 expect "egress excludes instance metadata" '- 169\.254\.0\.0/16' "$dev"
 expect "the environment has a ResourceQuota" 'kind: ResourceQuota' "$dev"
@@ -69,13 +69,13 @@ fails "a release outside app-<slug>-<env> is refused" "release namespace" \
 fails "another host is refused" "routing.hosts must be exactly" app todo dev tests/app/dev.yaml --set 'app.routing.hosts[0]=studio.agrt.dev'
 fails "an unknown environment is refused" "must be dev or prod" app todo stage tests/app/dev.yaml
 fails "a tag instead of a digest is refused" "pin the image by digest" app todo dev tests/app/dev.yaml --set app.image.reference=nginx:latest
-fails "an invalid slug is refused" "not a Broker Project slug" app Todo dev tests/app/dev.yaml
+fails "an invalid slug is refused" "not an Agent Delivery Project slug" app Todo dev tests/app/dev.yaml
 
 delivery=$(helm template delivery charts/delivery --namespace app-delivery \
   --set registry=123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects --set pushRoleArn=arn:aws:iam::123456789012:role/app-delivery-push \
   --set 'apiServer.cidrs={172.20.0.1/32,10.10.114.40/32}')
 expect "delivery renders the WorkflowTemplate" 'kind: WorkflowTemplate' "$delivery"
-expect "Broker may submit Workflows" 'name: agent-broker' "$delivery"
+expect "Agent Delivery may submit Workflows" 'name: agent-delivery' "$delivery"
 refuse "Helm leaves no template of its own" '\{\{ *\.' "$delivery"
 expect "the runner executor has its token Secret" 'name: delivery-runner.service-account-token' "$delivery"
 expect "runner Pods reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$delivery"
@@ -97,9 +97,9 @@ for task in ("test", "build", "check-application"):
 print(sorted(p["name"] for p in spec["arguments"]["parameters"]))
 PY
 )
-expect "the DAG keeps the step names Broker maps" '^checkout check-application test registry build deploy verify$' "$(head -1 <<<"$tasks")"
-expect "a changed declaration exits 3 for Broker" 'exit 3' "$(cat charts/delivery/files/workflow-template.yaml)"
-expect "the template takes Broker's parameters" "\['application', 'applicationSha256', 'delivery', 'environment', 'host', 'project', 'ref', 'repository'\]" "$tasks"
+expect "the DAG keeps the step names Agent Delivery maps" '^checkout check-application test registry build deploy verify$' "$(head -1 <<<"$tasks")"
+expect "a changed declaration exits 3 for Agent Delivery" 'exit 3' "$(cat charts/delivery/files/workflow-template.yaml)"
+expect "the template takes Agent Delivery's parameters" "\['application', 'applicationSha256', 'delivery', 'environment', 'host', 'project', 'ref', 'repository'\]" "$tasks"
 
 if command -v argo >/dev/null; then
   argo lint --offline charts/delivery/files/workflow-template.yaml >/dev/null && pass "argo lint accepts the WorkflowTemplate" || fail "argo lint accepts the WorkflowTemplate"

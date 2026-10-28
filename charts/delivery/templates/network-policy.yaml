@@ -1,6 +1,6 @@
 # test and build run the app's code. They reach DNS, the Kubernetes API server (the Argo executor reports
 # step results there; the code itself holds no token) and the public internet only: no other cluster service,
-# Broker pool, VPC address or metadata endpoint.
+# Agent Delivery pool, VPC address or metadata endpoint.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

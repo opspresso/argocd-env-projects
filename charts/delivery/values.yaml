@@ -20,10 +20,10 @@ gitops:
 # -l kubernetes.io/service-name=kubernetes). Runner Pods reach only these private addresses, on 443.
 apiServer:
   cidrs: []
-# The Agent Broker ServiceAccount that submits and observes Deliveries.
-broker:
-  namespace: agent-broker
-  serviceAccount: agent-broker
+# The Agent Delivery ServiceAccount that submits and observes Deliveries.
+submitter:
+  namespace: agent-delivery
+  serviceAccount: agent-delivery
 # The cluster DNS Service IP (kube-dns). EKS Auto Mode answers DNS there instead of from kube-system Pods.
 dns:
   cidrs: [172.20.0.10/32]

@@ -1,6 +1,6 @@
 apiVersion: v2
 name: project
-description: One environment of an application that Agent Broker delivers, on the opspresso app chart
+description: One environment of an application that Agent Delivery deploys, on the opspresso app chart
 type: application
 version: v2.2.0
 dependencies:
