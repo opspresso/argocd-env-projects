@@ -23,7 +23,9 @@
         readinessProbe: { httpGet: $probe, periodSeconds: 10, failureThreshold: 3 },
         livenessProbe: { httpGet: $probe, periodSeconds: 20, failureThreshold: 3 },
         resources: { requests: { cpu: $e.cpu, memory: $e.memory }, limits: { memory: $e.memory } },
-        # Each Delivery restarts the Pods, so they read the current Variables, and verify can find this rollout.
+        # Each Delivery refreshes app-env before the rollout (ExternalSecret sync-wave -1) and restarts the Pods,
+        # so they read Variables created moments before, and verify can find this rollout.
+        externalSecrets: { annotations: { "force-sync": $delivery } },
         podAnnotations: { "opspresso.com/delivery": $delivery, "opspresso.com/revision": $revision }
       }
       + (if $r.command then { command: $r.command } else {} end)

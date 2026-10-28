@@ -6,4 +6,4 @@ version: v2.2.0
 dependencies:
   - name: app
     repository: https://opspresso.github.io/helm-charts
-    version: "v2.0.0"
+    version: "v2.0.1"
