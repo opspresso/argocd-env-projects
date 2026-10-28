@@ -97,6 +97,12 @@ for task in ("test", "build", "check-application"):
     # Only the executor holds the token; the step's own code cannot read it.
     assert names[task].get("automountServiceAccountToken") is False, task
     assert names[task]["executor"]["serviceAccountName"] == "delivery-runner", task
+# Only checkout reads the checkout token Secret, and never through the Git config or the remote URL.
+readers = sorted(n for n, t in names.items() if "-checkout" in yaml.safe_dump(t.get("container", {}).get("env", [])))
+assert readers == ["checkout"], readers
+script = names["checkout"]["container"]["args"][0]
+assert "x-access-token" not in script.split("extraheader")[0] and "@github.com" not in script, "token stays out of the URL"
+assert "git config" not in script and "--global" not in script, "token is not stored"
 print(sorted(p["name"] for p in spec["arguments"]["parameters"]))
 PY
 )
