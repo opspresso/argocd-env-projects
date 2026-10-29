@@ -99,4 +99,5 @@ chart를 바꾸면 다음을 실행합니다. Helm 4와 Python `pyyaml`이 필�
    출력이 있으면 환경 이름을 바꾸거나 해당 Project를 먼저 정리합니다. Agent Delivery도 부팅 때 같은 충돌을 거절합니다.
 2. 두 저장소에 같은 이름·순서·primary로 환경을 추가합니다. argocd-env-addons는 `argocd` Application을 수동 sync합니다.
 3. 환경을 목록에서 지우면 그 환경의 Application이 지워지고, resources finalizer로 앱과 kro 인스턴스가 함께 삭제됩니다(RDS는 final snapshot만 남고, 객체가 남은 `S3Bucket`은 비울 때까지 삭제되지 않음).
-- 성공·실패한 Workflow는 1일 동안 남습니다. 실패한 Workflow는 Pod와 로그도 같은 기간 남습니다.
+- 성공·실패한 Workflow는 1일 동안 남습니다. `app-build`·`app-deploy`는 성공·실패와 관계없이 단계 Pod와 로그도 같은 기간 남아
+  Agent Delivery의 `deployment_logs`로 읽을 수 있습니다. `resource-sync`는 실패한 Workflow의 Pod만 남깁니다.

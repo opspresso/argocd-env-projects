@@ -13,9 +13,7 @@ spec:
   ttlStrategy:
     secondsAfterSuccess: 86400
     secondsAfterFailure: 86400
-  # Failed Pods stay until the TTL so Agent Delivery can return their logs.
-  podGC:
-    strategy: OnWorkflowSuccess
+  # No podGC: every step's Pod stays until the TTL removes the Workflow, so Agent Delivery can return its logs.
   securityContext:
     fsGroup: 1000
   arguments:
