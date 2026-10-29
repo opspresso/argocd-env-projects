@@ -80,7 +80,9 @@ app:
           - regexp:
               source: "^{{ printf \"/agent-delivery/%s/%s/%s\" (required \"tenant.cluster is required\" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}/"
               target: ""
-    # An app without Variables has no Secret: External Secrets creates none from an empty path.
+    # An app without Variables has no Secret: External Secrets creates none from an empty path, and deletes the
+    # Secret when the last Variable is removed instead of keeping the values of deleted resources.
+    deletionPolicy: Delete
     optional: true
 
   # Default deny. Ingress from the namespace and the istio-system ingress; egress to the namespace, cluster DNS,
