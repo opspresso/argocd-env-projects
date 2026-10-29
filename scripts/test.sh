@@ -62,6 +62,8 @@ expect "apps reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$dev"
 expect "egress excludes instance metadata" '- 169\.254\.0\.0/16' "$dev"
 expect "the environment has a ResourceQuota" 'kind: ResourceQuota' "$dev"
 expect "the ResourceQuota allows two RdsPostgres instances" 'count/rdspostgres.kro.run: "2"' "$dev"
+expect "the ResourceQuota allows two S3Bucket instances" 'count/s3buckets.kro.run: "2"' "$dev"
+expect "the ResourceQuota allows two ValkeyCache instances" 'count/valkeycaches.kro.run: "2"' "$dev"
 refuse "one replica has no HPA" 'kind: HorizontalPodAutoscaler' "$dev"
 refuse "one replica has no PDB" 'kind: PodDisruptionBudget' "$dev"
 
@@ -131,7 +133,8 @@ expect "runner Pods reach the API server on 443" 'cidr: 172.20.0.1/32' "$deliver
 fails "the API server address is required" "apiServer.cidrs is required" \
   helm template delivery charts/delivery --namespace app-delivery --set registry=x/projects --set pushRoleArn=arn:aws:iam::1:role/p
 expect "Argo parameters reach the WorkflowTemplates" '\{\{workflow\.parameters\.project\}\}' "$delivery"
-expect "resource-sync accepts RdsPostgres instances" 'RESOURCE_KINDS: "RdsPostgres"' "$delivery"
+expect "resource-sync accepts the platform kro kinds" 'RESOURCE_KINDS: "RdsPostgres S3Bucket ValkeyCache"' "$delivery"
+expect "Agent Delivery reads every platform kro kind" 'resources: \[rdspostgres, s3buckets, valkeycaches\]' "$delivery"
 
 contract=$(python3 scripts/workflow_contract.py)
 line() { grep -E "^$1 $2( |$)" <<<"$contract" | cut -d' ' -f3-; }
@@ -152,7 +155,8 @@ expect "a changed declaration exits 3 for Agent Delivery" 'exit 3' "$(cat charts
 expect "deploy refuses an image of another Project" 'is not an image of \$\{REGISTRY\}/\$\{PROJECT\} pinned by digest' "$(cat charts/delivery/files/app-deploy.yaml)"
 
 # resource-sync writes only allowed kro instances of the environment's namespace.
-check() { sh charts/delivery/files/check-resources.sh app-todo-dev RdsPostgres; }
+kinds="RdsPostgres S3Bucket ValkeyCache"
+check() { sh charts/delivery/files/check-resources.sh app-todo-dev "$kinds"; }
 rds='apiVersion: kro.run/v1alpha1
 kind: RdsPostgres
 metadata:
@@ -160,6 +164,22 @@ metadata:
 spec:
   passwordSecret: {name: app-env, key: MAIN_PGPASSWORD}'
 expect "an RdsPostgres instance is written" '^kind: RdsPostgres$' "$(check <<<"$rds" 2>&1)"
+valkey='apiVersion: kro.run/v1alpha1
+kind: ValkeyCache
+metadata:
+  name: cache
+spec:
+  passwordSecret: {key: CACHE_VALKEY_PASSWORD}'
+bucket='apiVersion: kro.run/v1alpha1
+kind: S3Bucket
+metadata:
+  name: files
+spec:
+  versioning: false'
+all=$(check <<<"$(printf '%s\n---\n%s\n---\n%s' "$rds" "$valkey" "$bucket")" 2>&1)
+expect "a ValkeyCache instance is written" '^kind: ValkeyCache$' "$all"
+expect "an S3Bucket instance is written" '^kind: S3Bucket$' "$all"
+fails "two kinds with one name are refused" "uniquely named" check <<<"$(printf '%s\n---\n%s' "$rds" "${valkey/name: cache/name: main}")"
 fails "an empty manifest is refused" "manifest is empty" check </dev/null
 fails "a manifest of empty documents is refused" "no document" check <<<"$(printf -- '---\n# none\n')"
 # Agent Delivery's zero-resource manifest, decoded the way the write step decodes the parameter.
@@ -175,8 +195,8 @@ long=$(printf 'a%.0s' $(seq 50))
 expect "a 50-character name is written" "name: ${long}$" "$(check <<<"${rds/name: main/name: ${long}}" 2>&1)"
 fails "a 51-character name is refused" "uniquely named" check <<<"${rds/name: main/name: ${long}b}"
 fails "a name that ends with a hyphen is refused" "uniquely named" check <<<"${rds/name: main/name: main-}"
-fails "another kind is refused" "kinds \[RdsPostgres\]" check <<<"$(printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: x\n')"
-fails "another API group is refused" "kinds \[RdsPostgres\]" check <<<"${rds/kro.run/rds.services.k8s.aws}"
+fails "another kind is refused" "kinds \[RdsPostgres S3Bucket ValkeyCache\]" check <<<"$(printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: x\n')"
+fails "another API group is refused" "kinds \[RdsPostgres S3Bucket ValkeyCache\]" check <<<"${rds/kro.run/rds.services.k8s.aws}"
 fails "another namespace is refused" "namespace app-todo-dev" check <<<"${rds/name: main/name: main
   namespace: app-other-dev}"
 fails "a duplicate name is refused" "uniquely named" check <<<"$(printf '%s\n---\n%s' "$rds" "$rds")"

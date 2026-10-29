@@ -12,7 +12,7 @@ Agent Delivery가 배포하는 앱의 GitOps 저장소입니다. Studio Agent가
 | `charts/app/` | 앱 Environment 하나의 wrapper chart. [opspresso/helm-charts](https://github.com/opspresso/helm-charts)의 `app` chart(argocd-env-apps의 sample-node·agent-*와 같은 chart)의 설정으로 Deployment·Service·HTTPRoute·HPA·PDB·SecretStore·ExternalSecret·NetworkPolicy·ResourceQuota를 만든다. `app.yaml`이 없으면 Deployment·Service·HTTPRoute 없이 tenant 객체만 만든다. `app.raw`에는 환경·namespace·host·image digest를 검사하는 guard만 둔다 | 운영자(PR) |
 | `charts/delivery/` | namespace `app-delivery`의 Argo Workflows WorkflowTemplate `app-build`·`app-deploy`·`resource-sync`, 단계별 ServiceAccount·RBAC, 설정 | 운영자(PR) |
 | `projects/<slug>/<env>/app.yaml` | Environment 하나의 `app` chart 값: 이미지 digest, 복제 수, port, env, probe, 자원. `app-deploy`의 deploy 단계가 `charts/delivery/files/render.jq`로 Agent Delivery의 선언에서 만든다 | `app-deploy` workflow만 |
-| `projects/<slug>/<env>/resources.yaml` | Environment 하나의 namespace 리소스(kro 인스턴스, 예: `RdsPostgres`). Agent Delivery가 렌더링한 manifest를 `resource-sync`의 write 단계가 검사해 기록한다 | `resource-sync` workflow만 |
+| `projects/<slug>/<env>/resources.yaml` | Environment 하나의 namespace 리소스(kro 인스턴스 `RdsPostgres`·`S3Bucket`·`ValkeyCache`). Agent Delivery가 렌더링한 manifest를 `resource-sync`의 write 단계가 검사해 기록한다 | `resource-sync` workflow만 |
 | `scripts/test.sh` | 두 chart를 Argo CD와 같은 parameter로 렌더링하고 계약을 검사한다 | |
 
 Argo CD 객체는 [argocd-env-addons](https://github.com/opspresso/argocd-env-addons)의 `charts/argo-cd`가 선언합니다.
@@ -83,8 +83,10 @@ chart를 바꾸면 다음을 실행합니다. Helm 4와 Python `pyyaml`이 필�
 
 - `projects/`는 직접 고치지 않습니다. 값을 바꾸려면 앱 저장소의 `application.yaml`을 고치고 Agent Delivery에 다시 적용한 뒤 새 Delivery를 시작합니다.
 - 앱을 내리려면 `projects/<slug>/<env>/` 디렉터리를 지우는 PR을 병합합니다. Argo CD가 Application과 그 리소스(kro 인스턴스 포함)를 지웁니다.
-  `RdsPostgres`는 final snapshot `<DB 식별자>-final-<인스턴스 UID>`만 남기고 RDS가 삭제됩니다. namespace `app-<slug>-<env>`는 남으므로 확인한 뒤 지웁니다.
-- 환경 하나에 `RdsPostgres`는 2개까지입니다(ResourceQuota `count/rdspostgres.kro.run`).
+  `RdsPostgres`는 final snapshot `<DB 식별자>-final-<인스턴스 UID>`만 남기고 RDS가 삭제됩니다. `ValkeyCache`는 snapshot 없이 삭제됩니다.
+  `S3Bucket`은 bucket이 비어 있을 때만 삭제됩니다. 객체가 남아 있으면 인스턴스가 `BucketNotEmpty` 메시지와 함께 남고 Application 삭제도 끝나지 않으므로,
+  객체(버전 포함)를 지운 뒤 다시 확인합니다. namespace `app-<slug>-<env>`는 남으므로 확인한 뒤 지웁니다.
+- 환경 하나에 `RdsPostgres`·`S3Bucket`·`ValkeyCache`는 종류마다 2개까지입니다(ResourceQuota `count/rdspostgres.kro.run`·`count/s3buckets.kro.run`·`count/valkeycaches.kro.run`).
 
 ## 환경 추가
 
@@ -96,5 +98,5 @@ chart를 바꾸면 다음을 실행합니다. Helm 4와 Python `pyyaml`이 필�
    ```
    출력이 있으면 환경 이름을 바꾸거나 해당 Project를 먼저 정리합니다. Agent Delivery도 부팅 때 같은 충돌을 거절합니다.
 2. 두 저장소에 같은 이름·순서·primary로 환경을 추가합니다. argocd-env-addons는 `argocd` Application을 수동 sync합니다.
-3. 환경을 목록에서 지우면 그 환경의 Application이 지워지고, resources finalizer로 앱과 `RdsPostgres`가 함께 삭제됩니다(RDS는 final snapshot만 남음).
+3. 환경을 목록에서 지우면 그 환경의 Application이 지워지고, resources finalizer로 앱과 kro 인스턴스가 함께 삭제됩니다(RDS는 final snapshot만 남고, 객체가 남은 `S3Bucket`은 비울 때까지 삭제되지 않음).
 - 성공·실패한 Workflow는 1일 동안 남습니다. 실패한 Workflow는 Pod와 로그도 같은 기간 남습니다.

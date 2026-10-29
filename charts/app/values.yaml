@@ -132,6 +132,9 @@ app:
       services.nodeports: "0"
       # Each RdsPostgres is a billed RDS instance. Agent Delivery has its own limit; this is the cluster's.
       count/rdspostgres.kro.run: "2"
+      # Each S3Bucket is a dedicated bucket and each ValkeyCache a billed serverless cache.
+      count/s3buckets.kro.run: "2"
+      count/valkeycaches.kro.run: "2"
 
   raw:
     enabled: true
