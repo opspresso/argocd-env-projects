@@ -19,7 +19,11 @@ spec:
   ttlStrategy:
     secondsAfterSuccess: 86400
     secondsAfterFailure: 86400
-  # No podGC: every step's Pod stays until the TTL removes the Workflow, so Agent Delivery can return its logs.
+  # Every step's Pod stays a day after the Workflow ends so Agent Delivery can return its logs. Set it here: without
+  # podGC the controller's workflowDefaults (OnPodSuccess) remove each Pod as soon as it succeeds.
+  podGC:
+    strategy: OnWorkflowCompletion
+    deleteDelayDuration: 24h
   securityContext:
     fsGroup: 1000
   arguments:
