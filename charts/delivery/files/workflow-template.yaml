@@ -27,12 +27,14 @@ spec:
       - name: applicationSha256
       - name: application
       - name: host
+  # The work volume is scratch space. gp3-ephemeral deletes the EBS volume with its claim; the default gp3 class
+  # retains it and leaks one volume per Delivery.
   volumeClaimTemplates:
     - metadata:
         name: work
       spec:
         accessModes: [ReadWriteOnce]
-        storageClassName: gp3
+        storageClassName: gp3-ephemeral
         resources:
           requests:
             storage: 10Gi
