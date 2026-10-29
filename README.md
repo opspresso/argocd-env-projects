@@ -22,7 +22,9 @@ Argo CD 객체는 [argocd-env-addons](https://github.com/opspresso/argocd-env-ad
 - Application `app-delivery`: `charts/delivery`를 동기화합니다.
 - ApplicationSet `projects`: 허용한 환경 목록(`app_delivery.environments`)의 `projects/*/<env>` 디렉터리마다
   Application `app-<slug>-<env>`를 만듭니다. Application은 `charts/app`(값: `app.yaml`)과 `resources.yaml`을 함께 동기화합니다.
-  Project·Environment·namespace·도메인은 디렉터리 경로와 클러스터 설정에서 정합니다. 파일 내용으로 바꿀 수 없습니다.
+  Project·Environment·namespace·도메인은 디렉터리 경로와 클러스터 설정에서 정하고, `charts/app`의 guard가 검사합니다.
+  guard는 값 파일의 `app.raw`로 끌 수 있으므로 보조 방어입니다. 실제 경계는 `app.yaml`을 `deploy` 단계만 고정 매핑 `render.jq`로 쓰고,
+  deploy key를 `delivery-git` 단계(`deploy`·`write`)만 가진다는 점입니다.
 
 ## Delivery 흐름
 
@@ -52,7 +54,7 @@ flowchart LR
 | `app-build` | `build` | `delivery-runner` | kaniko로 linux/arm64 이미지를 빌드해 commit SHA tag로 push한다. user namespace·privileged가 필요 없다 |
 | `app-deploy` | `deploy` | `delivery-git` | 이미지가 그 Project의 digest 고정 이미지인지 확인하고 `projects/<slug>/<env>/app.yaml`에 기록한다. 이 저장소에만 쓰기 권한이 있는 deploy key(SSM `/k8s/common/app-delivery/gitops-deploy-key`)로 push한다 |
 | `app-deploy` | `verify` | `delivery-verify` | rollout 완료와 `https://<host><health>`의 2xx 응답을 기다린다 |
-| `resource-sync` | `write` | `delivery-git` | manifest가 허용한 kro 인스턴스 종류(`resourceKinds`)이고 그 환경 namespace에 속하는지 확인하고 `projects/<slug>/<env>/resources.yaml`에 기록한다. 빈 manifest는 그 환경의 리소스를 모두 지운다 |
+| `resource-sync` | `write` | `delivery-git` | manifest가 허용한 kro 인스턴스 종류(`resourceKinds`)이고 그 환경 namespace에 속하는지, 이름이 `^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$`이고 고유한지 확인하고 `projects/<slug>/<env>/resources.yaml`에 기록한다. 리소스를 모두 지우려면 `{apiVersion: v1, kind: List, items: []}` 문서를 보낸다. 빈 manifest는 거부한다 |
 
 `test`·`build`는 앱 코드를 실행합니다. 이 Pod는 Git 자격 증명·AWS·Kubernetes 권한을 받지 않고, NetworkPolicy
 `delivery-runner`로 DNS와 공인 인터넷에만 연결합니다.
@@ -79,5 +81,18 @@ chart를 바꾸면 다음을 실행합니다. Helm 4와 Python `pyyaml`이 필�
 
 - `projects/`는 직접 고치지 않습니다. 값을 바꾸려면 앱 저장소의 `application.yaml`을 고치고 Agent Delivery에 다시 적용한 뒤 새 Delivery를 시작합니다.
 - 앱을 내리려면 `projects/<slug>/<env>/` 디렉터리를 지우는 PR을 병합합니다. Argo CD가 Application과 그 리소스(kro 인스턴스 포함)를 지웁니다.
-  namespace `app-<slug>-<env>`는 남으므로 확인한 뒤 지웁니다.
+  `RdsPostgres`는 final snapshot `<DB 식별자>-final-<인스턴스 UID>`만 남기고 RDS가 삭제됩니다. namespace `app-<slug>-<env>`는 남으므로 확인한 뒤 지웁니다.
+- 환경 하나에 `RdsPostgres`는 2개까지입니다(ResourceQuota `count/rdspostgres.kro.run`).
+
+## 환경 추가
+
+환경 목록은 argocd-env-addons `app_delivery.environments`와 argocd-env-apps의 Agent Delivery `DELIVERY_ENVIRONMENTS`가 정합니다.
+
+1. 사전 점검: 기존 Project slug가 `-<새 환경>`으로 끝나지 않는지 확인합니다. 끝나면 그 Project의 primary host가 다른 Project의 새 환경 host와 겹칩니다.
+   ```bash
+   ls projects | grep -- '-<새 환경>$'   # 출력이 없어야 합니다
+   ```
+   출력이 있으면 환경 이름을 바꾸거나 해당 Project를 먼저 정리합니다. Agent Delivery도 부팅 때 같은 충돌을 거절합니다.
+2. 두 저장소에 같은 이름·순서·primary로 환경을 추가합니다. argocd-env-addons는 `argocd` Application을 수동 sync합니다.
+3. 환경을 목록에서 지우면 그 환경의 Application이 지워지고, resources finalizer로 앱과 `RdsPostgres`가 함께 삭제됩니다(RDS는 final snapshot만 남음).
 - 성공·실패한 Workflow는 1일 동안 남습니다. 실패한 Workflow는 Pod와 로그도 같은 기간 남습니다.

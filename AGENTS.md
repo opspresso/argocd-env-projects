@@ -24,7 +24,9 @@ This repository is the GitOps home of the apps that Agent Delivery deploys. The 
   `app.tenant.*` (project, environment, environments, primaryEnvironment, domain, cluster, region,
   tenantSecretsRoleArn) and `app.routing.hosts` as Helm parameters from the directory path and the cluster. The guard
   template refuses an environment outside the list, any other namespace or host, and a workload image without a
-  digest, so a values file can never move an app, add an environment or claim another host.
+  digest. The guard is defense in depth: a values file could set `app.raw` and turn it off. The boundary is that only
+  the `deploy` step writes `app.yaml`, through the fixed `render.jq` mapping, with a deploy key that only the
+  `delivery-git` steps (`deploy`, `write`) hold. Keep both, and never let other content reach the values files.
 - `app.tenant.environments` is a space-separated string, not a list: a values file could add items to a list
   parameter.
 - Without `app.yaml` the chart renders only the tenant objects (no Deployment, Service or HTTPRoute), so

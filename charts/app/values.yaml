@@ -1,7 +1,9 @@
 # One Project environment on the opspresso app chart, like argocd-env-apps sample-node and the agent-* services.
 # The deploy step of the app-deploy workflow writes projects/<project>/<environment>/app.yaml with the workload values
-# (image digest, replicas, port, env, probes, resources). The ApplicationSet sets app.tenant.* and app.routing.hosts
-# from the directory path and the cluster as Helm parameters, which a values file cannot override.
+# (image digest, replicas, port, env, probes, resources) through the fixed render.jq mapping. The ApplicationSet sets
+# app.tenant.* and app.routing.hosts from the directory path and the cluster as Helm parameters, and the guard below
+# checks them. A values file could turn the guard off, so the boundary is that only the deploy step writes app.yaml,
+# with a deploy key that only the delivery-git steps hold.
 app:
   fullnameOverride: app
 
@@ -128,6 +130,8 @@ app:
       pods: "12"
       services.loadbalancers: "0"
       services.nodeports: "0"
+      # Each RdsPostgres is a billed RDS instance. Agent Delivery has its own limit; this is the cluster's.
+      count/rdspostgres.kro.run: "2"
 
   raw:
     enabled: true

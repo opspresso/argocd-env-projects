@@ -61,6 +61,7 @@ expect "ExternalSecret reads this environment" "path: '?/agent-delivery/eks-demo
 expect "apps reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$dev"
 expect "egress excludes instance metadata" '- 169\.254\.0\.0/16' "$dev"
 expect "the environment has a ResourceQuota" 'kind: ResourceQuota' "$dev"
+expect "the ResourceQuota allows two RdsPostgres instances" 'count/rdspostgres.kro.run: "2"' "$dev"
 refuse "one replica has no HPA" 'kind: HorizontalPodAutoscaler' "$dev"
 refuse "one replica has no PDB" 'kind: PodDisruptionBudget' "$dev"
 
@@ -156,8 +157,15 @@ metadata:
 spec:
   passwordSecret: {name: app-env, key: MAIN_PGPASSWORD}'
 expect "an RdsPostgres instance is written" '^kind: RdsPostgres$' "$(check <<<"$rds" 2>&1)"
-if out=$(check </dev/null 2>&1) && [ -z "$out" ]; then pass "an empty manifest writes no resource"; else fail "an empty manifest writes no resource ($out)"; fi
-if out=$(printf -- '---\n# none\n' | check 2>&1) && [ -z "$out" ]; then pass "a manifest of empty documents writes no resource"; else fail "a manifest of empty documents writes no resource ($out)"; fi
+fails "an empty manifest is refused" "manifest is empty" check </dev/null
+fails "a manifest of empty documents is refused" "no document" check <<<"$(printf -- '---\n# none\n')"
+if out=$(check <<<'{"apiVersion": "v1", "kind": "List", "items": []}' 2>&1) && [ -z "$out" ]; then
+  pass "the explicit empty List removes every resource"; else fail "the explicit empty List removes every resource ($out)"; fi
+fails "a List with items is refused" "only be the empty list" check <<<"$(printf 'apiVersion: v1\nkind: List\nitems:\n  - %s\n' '{"kind": "Secret"}')"
+long=$(printf 'a%.0s' $(seq 50))
+expect "a 50-character name is written" "name: ${long}$" "$(check <<<"${rds/name: main/name: ${long}}" 2>&1)"
+fails "a 51-character name is refused" "uniquely named" check <<<"${rds/name: main/name: ${long}b}"
+fails "a name that ends with a hyphen is refused" "uniquely named" check <<<"${rds/name: main/name: main-}"
 fails "another kind is refused" "kinds \[RdsPostgres\]" check <<<"$(printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: x\n')"
 fails "another API group is refused" "kinds \[RdsPostgres\]" check <<<"${rds/kro.run/rds.services.k8s.aws}"
 fails "another namespace is refused" "namespace app-todo-dev" check <<<"${rds/name: main/name: main
