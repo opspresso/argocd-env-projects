@@ -1,4 +1,20 @@
-# Written by the resource-sync workflow for Sync 84e778bd-8522-4ac7-92cd-1ef11676a068. Do not edit.
+# Written by the resource-sync workflow for Sync 121ec162-a16d-4f0d-9be8-d7c75daa0f31. Do not edit.
+apiVersion: kro.run/v1alpha1
+kind: ValkeyCache
+metadata:
+  name: cache
+  namespace: app-e2e-hello-prod
+  labels:
+    opspresso.com/project: e2e-hello
+    opspresso.com/environment: prod
+    opspresso.com/resource: 353d50a9-2a75-428e-9a82-094dc026ea7f
+spec:
+  maxDataStorageGiB: 1
+  maxECPUPerSecond: 1000
+  passwordSecret:
+    name: app-env
+    key: CACHE_VALKEY_PASSWORD
+---
 apiVersion: kro.run/v1alpha1
 kind: S3Bucket
 metadata:
