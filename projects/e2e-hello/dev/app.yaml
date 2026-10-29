@@ -1,6 +1,5 @@
-# Written by the app-delivery workflow for Delivery 3de02d6b-a28f-4868-9558-5adac3150b61. Do not edit.
-delivery: 3de02d6b-a28f-4868-9558-5adac3150b61
-revision: 31ff051ca808ee9dec67db42f1b3c9925b9d12de
+# Written by the app-deploy workflow for Deployment 77d7e55f-afbb-4e65-81b0-46e0ccedcbf3. Do not edit.
+deployment: 77d7e55f-afbb-4e65-81b0-46e0ccedcbf3
 app:
   controller:
     enabled: true
@@ -48,7 +47,6 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: 3de02d6b-a28f-4868-9558-5adac3150b61
+      force-sync: 77d7e55f-afbb-4e65-81b0-46e0ccedcbf3
   podAnnotations:
-    opspresso.com/delivery: 3de02d6b-a28f-4868-9558-5adac3150b61
-    opspresso.com/revision: 31ff051ca808ee9dec67db42f1b3c9925b9d12de
+    opspresso.com/deployment: 77d7e55f-afbb-4e65-81b0-46e0ccedcbf3
