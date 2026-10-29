@@ -159,9 +159,15 @@ spec:
 expect "an RdsPostgres instance is written" '^kind: RdsPostgres$' "$(check <<<"$rds" 2>&1)"
 fails "an empty manifest is refused" "manifest is empty" check </dev/null
 fails "a manifest of empty documents is refused" "no document" check <<<"$(printf -- '---\n# none\n')"
-if out=$(check <<<'{"apiVersion": "v1", "kind": "List", "items": []}' 2>&1) && [ -z "$out" ]; then
-  pass "the explicit empty List removes every resource"; else fail "the explicit empty List removes every resource ($out)"; fi
-fails "a List with items is refused" "only be the empty list" check <<<"$(printf 'apiVersion: v1\nkind: List\nitems:\n  - %s\n' '{"kind": "Secret"}')"
+# Agent Delivery's zero-resource manifest, decoded the way the write step decodes the parameter.
+EMPTY_LIST='{"apiVersion":"v1","kind":"List","items":[]}'
+if out=$(printf '%s' "$EMPTY_LIST" | base64 | tr -d '\n' | base64 -d | check 2>&1) && [ -z "$out" ]; then
+  pass "Agent Delivery's empty List removes every resource"; else fail "Agent Delivery's empty List removes every resource ($out)"; fi
+fails "a List with items is refused" "only be the single document" check <<<'{"apiVersion":"v1","kind":"List","items":[{"kind":"Secret"}]}'
+fails "a List with other fields is refused" "only be the single document" check <<<'{"apiVersion":"v1","kind":"List","items":[],"metadata":{}}'
+fails "a List of another apiVersion is refused" "only be the single document" check <<<'{"apiVersion":"v2","kind":"List","items":[]}'
+fails "an empty List next to a resource is refused" "only be the single document" check <<<"$(printf '%s\n---\n%s' "$EMPTY_LIST" "$rds")"
+fails "an empty JSON array is refused" "uniquely named" check <<<'[]'
 long=$(printf 'a%.0s' $(seq 50))
 expect "a 50-character name is written" "name: ${long}$" "$(check <<<"${rds/name: main/name: ${long}}" 2>&1)"
 fails "a 51-character name is refused" "uniquely named" check <<<"${rds/name: main/name: ${long}b}"

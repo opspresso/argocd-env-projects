@@ -13,8 +13,10 @@ manifest=$(cat)
 [ -n "$(printf '%s' "$manifest" | tr -d '[:space:]')" ] || fail "The manifest is empty. Send {apiVersion: v1, kind: List, items: []} to remove every resource."
 documents=$(printf '%s\n' "$manifest" | yq -o json -I 0 'select(. != null)')
 [ -n "$documents" ] || fail "The manifest has no document. Send {apiVersion: v1, kind: List, items: []} to remove every resource."
-if printf '%s\n' "$documents" | jq -e -s 'length == 1 and .[0].apiVersion == "v1" and .[0].kind == "List"' >/dev/null; then
-  printf '%s\n' "$documents" | jq -e '.items == []' >/dev/null || fail "A List may only be the empty list that removes every resource."
+# Agent Delivery sends exactly {"apiVersion":"v1","kind":"List","items":[]} (one JSON document) for zero resources.
+if printf '%s\n' "$documents" | jq -e -s 'any(.[]; .kind == "List")' >/dev/null; then
+  printf '%s\n' "$documents" | jq -e -s '. == [{"apiVersion": "v1", "kind": "List", "items": []}]' >/dev/null \
+    || fail 'A List may only be the single document {"apiVersion":"v1","kind":"List","items":[]} that removes every resource.'
   exit 0
 fi
 printf '%s\n' "$documents" | jq -e -s --arg namespace "$namespace" --arg kinds "$kinds" '
