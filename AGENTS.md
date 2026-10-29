@@ -40,6 +40,8 @@ This repository is the GitOps home of the apps that Agent Delivery deploys. The 
 - Keep the WorkflowTemplate names, parameters, results and DAG task names of the Workflow contract in
   `docs/DELIVERY_V2.md` (`app-build`: `checkout`, `check-application`, `test`, `registry`, `build`; `app-deploy`:
   `deploy`, `verify`; `resource-sync`: `write`). Agent Delivery submits them and maps failed tasks to its steps.
+- `resource-sync` and `app-deploy` hold a per-environment mutex (`resources-<project>-<environment>`,
+  `deploy-<project>-<environment>`). Argo Workflows v4 accepts only `synchronization.mutexes`.
 - `resource-sync` writes only kro instances of the kinds in `resourceKinds` (charts/delivery values) in the
   environment's namespace. AppProject `projects` must allow the same kinds.
 - Steps that run app code (`test`, `build`) get no Git credential, AWS identity or Kubernetes permission.
