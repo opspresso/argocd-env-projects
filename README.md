@@ -67,4 +67,4 @@ chart를 바꾸면 다음을 실행합니다. Helm 4와 Python `pyyaml`이 필�
 - `projects/`는 직접 고치지 않습니다. 값을 바꾸려면 앱 저장소의 `application.yaml`을 고치고 Agent Delivery에 다시 적용한 뒤 새 Delivery를 시작합니다.
 - 앱을 내리려면 `projects/<slug>/<env>.yaml`을 지우는 PR을 병합합니다. Argo CD가 Application과 그 리소스를 지웁니다.
   namespace `app-<slug>-<env>`는 남으므로 확인한 뒤 지웁니다.
-- 실패한 Delivery의 Pod와 로그는 7일, 성공한 Workflow는 1일 동안 남습니다.
+- 성공·실패한 Delivery의 Workflow는 1일 동안 남습니다. 실패한 Delivery는 Pod와 로그도 같은 기간 남습니다.

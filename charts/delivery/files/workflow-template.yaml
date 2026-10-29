@@ -11,7 +11,7 @@ spec:
   activeDeadlineSeconds: 3600
   ttlStrategy:
     secondsAfterSuccess: 86400
-    secondsAfterFailure: 604800
+    secondsAfterFailure: 86400
   # Failed Pods stay until the TTL so Agent Delivery can return their logs.
   podGC:
     strategy: OnWorkflowSuccess
