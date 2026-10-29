@@ -1,9 +1,17 @@
 # One Project environment on the opspresso app chart, like argocd-env-apps sample-node and the agent-* services.
-# The app-delivery workflow writes projects/<project>/<environment>.yaml with the workload values (image digest,
-# replicas, port, env, probes, resources). The ApplicationSet sets app.tenant.* and app.routing.hosts from the file
-# path and the cluster as Helm parameters, which a values file cannot override.
+# The deploy step of the app-deploy workflow writes projects/<project>/<environment>/app.yaml with the workload values
+# (image digest, replicas, port, env, probes, resources) through the fixed render.jq mapping. The ApplicationSet sets
+# app.tenant.* and app.routing.hosts from the directory path and the cluster as Helm parameters, and the guard below
+# checks them. A values file could turn the guard off, so the boundary is that only the deploy step writes app.yaml,
+# with a deploy key that only the delivery-git steps hold.
 app:
   fullnameOverride: app
+
+  # Without app.yaml the environment has only its tenant objects (ServiceAccount, SecretStore, ExternalSecret,
+  # NetworkPolicy, ResourceQuota), so resources.yaml can use Secret app-env before the first deployment.
+  # charts/delivery/files/render.jq turns the workload on.
+  controller:
+    enabled: false
 
   # Pod Identity for bucket resources mounts its own token; the app needs no Kubernetes API token.
   serviceAccount:
@@ -19,12 +27,13 @@ app:
       drop: [ALL]
 
   service:
+    enabled: false
     targetPort: 8080
 
   routing:
     hosts: []
     httpRoute:
-      enabled: true
+      enabled: false
       parentRefs:
         - name: istio-ingressgateway
           namespace: istio-system
@@ -32,6 +41,11 @@ app:
   tenant:
     project: ""
     environment: ""
+    # The allowed environments (space separated) and the primary one, from app_delivery in argocd-env-addons (Agent
+    # Delivery's DELIVERY_ENVIRONMENTS). The primary environment is served on <project>.<domain>, any other on
+    # <project>-<environment>.<domain>. A string, not a list: a values file could add items to a list parameter.
+    environments: ""
+    primaryEnvironment: ""
     domain: ""
     cluster: ""
     region: ap-northeast-2
@@ -116,17 +130,23 @@ app:
       pods: "12"
       services.loadbalancers: "0"
       services.nodeports: "0"
+      # Each RdsPostgres is a billed RDS instance. Agent Delivery has its own limit; this is the cluster's.
+      count/rdspostgres.kro.run: "2"
 
   raw:
     enabled: true
     parentTemplates:
-      # Guard: renders nothing, and refuses a release that is not exactly app-<project>-<env> with its own host
-      # and an image pinned by digest.
+      # Guard: renders nothing, and refuses a release that is not exactly app-<project>-<env> of an allowed environment
+      # with its own host, and a workload whose image is not pinned by digest.
       - |
         {{- $t := .Values.tenant }}
+        {{- $envs := splitList " " (toString ($t.environments | default "")) | compact }}
         {{- if not (regexMatch "^[a-z][a-z0-9-]{1,30}[a-z0-9]$" ($t.project | default "")) }}{{ fail (printf "tenant.project %q is not an Agent Delivery Project slug" $t.project) }}{{ end }}
-        {{- if not (has $t.environment (list "dev" "prod")) }}{{ fail (printf "tenant.environment %q must be dev or prod" $t.environment) }}{{ end }}
+        {{- range $envs }}{{ if not (regexMatch "^[a-z][a-z0-9]{1,11}$" .) }}{{ fail (printf "tenant.environments has an invalid name %q" .) }}{{ end }}{{ end }}
+        {{- if not (has $t.environment $envs) }}{{ fail (printf "tenant.environment %q is not one of tenant.environments %v" $t.environment $envs) }}{{ end }}
+        {{- if not (has $t.primaryEnvironment $envs) }}{{ fail (printf "tenant.primaryEnvironment %q is not one of tenant.environments %v" $t.primaryEnvironment $envs) }}{{ end }}
+        {{- range $envs }}{{ if hasSuffix (printf "-%s" .) $t.project }}{{ fail (printf "tenant.project %q must not end with -%s: its host would collide with another environment" $t.project .) }}{{ end }}{{ end }}
         {{- if ne .Release.Namespace (printf "app-%s-%s" $t.project $t.environment) }}{{ fail (printf "release namespace %q must be app-%s-%s" .Release.Namespace $t.project $t.environment) }}{{ end }}
-        {{- $host := ternary (printf "%s.%s" $t.project $t.domain) (printf "%s-%s.%s" $t.project $t.environment $t.domain) (eq $t.environment "prod") }}
+        {{- $host := ternary (printf "%s.%s" $t.project $t.domain) (printf "%s-%s.%s" $t.project $t.environment $t.domain) (eq $t.environment $t.primaryEnvironment) }}
         {{- if or (not $t.domain) (ne (toJson .Values.routing.hosts) (toJson (list $host))) }}{{ fail (printf "routing.hosts must be exactly [%s]" $host) }}{{ end }}
-        {{- if not (regexMatch "@sha256:[a-f0-9]{64}$" (.Values.image.reference | default "")) }}{{ fail "image.reference must pin the image by digest" }}{{ end }}
+        {{- if and .Values.controller.enabled (not (regexMatch "@sha256:[a-f0-9]{64}$" (.Values.image.reference | default ""))) }}{{ fail "image.reference must pin the image by digest" }}{{ end }}

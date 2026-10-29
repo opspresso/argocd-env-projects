@@ -1,0 +1,115 @@
+# One resource sync: write the namespaced resources of one Project environment, which Agent Delivery rendered as kro
+# instances, to projects/<project>/<environment>/resources.yaml (agent-platform docs/DELIVERY_V2.md D4). Argo CD
+# applies the file in namespace app-<project>-<environment>; Agent Delivery reads the instance status there.
+# Agent Delivery is the only submitter and names the Workflow resources-<Sync ID>. It holds no GitOps credential:
+# only this step's deploy key writes. Removing every resource of the environment needs the explicit document
+# {apiVersion: v1, kind: List, items: []}; an empty manifest is refused.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: resource-sync
+spec:
+  entrypoint: sync
+  serviceAccountName: delivery-runner
+  activeDeadlineSeconds: 600
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 86400
+  # Failed Pods stay until the TTL so Agent Delivery can return their logs.
+  podGC:
+    strategy: OnWorkflowSuccess
+  securityContext:
+    fsGroup: 1000
+  arguments:
+    parameters:
+      - name: sync
+      - name: project
+      - name: environment
+      # Every resource of the environment as a base64 YAML stream.
+      - name: manifest
+  templates:
+    - name: sync
+      dag:
+        tasks:
+          - name: write
+            template: write
+
+    # The init container checks the manifest: only the instance kinds of the platform's ResourceGraphDefinitions
+    # (RESOURCE_KINDS in delivery-settings), in this environment's namespace. AppProject projects enforces the same
+    # kinds when Argo CD applies the file.
+    - name: write
+      serviceAccountName: delivery-git
+      activeDeadlineSeconds: 300
+      initContainers:
+        - name: check
+          image: alpine/k8s:1.37.1
+          command: [sh, -euc]
+          args:
+            - |
+              printf '%s' "$PROJECT" | grep -qE '^[a-z][a-z0-9-]{1,30}[a-z0-9]$' || { echo "Invalid project $PROJECT"; exit 1; }
+              printf '%s' "$ENVIRONMENT" | grep -qE '^[a-z][a-z0-9]{1,11}$' || { echo "Invalid environment $ENVIRONMENT"; exit 1; }
+              namespace="app-${PROJECT}-${ENVIRONMENT}"
+              # Decode first: a manifest that is not base64 must fail, not become an empty file that removes every resource.
+              printf '%s' "$MANIFEST" | base64 -d > /work/manifest.yaml
+              { echo "# Written by the resource-sync workflow for Sync ${SYNC}. Do not edit."
+                sh /etc/delivery-scripts/check-resources.sh "$namespace" "$RESOURCE_KINDS" < /work/manifest.yaml; } > /work/resources.yaml
+              echo "Checked the resources of $namespace"
+          env:
+            - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+            - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
+            - {name: SYNC, value: "{{workflow.parameters.sync}}"}
+            - {name: MANIFEST, value: "{{workflow.parameters.manifest}}"}
+            - {name: HOME, value: /tmp}
+          envFrom:
+            - configMapRef:
+                name: delivery-settings
+          securityContext: &unprivileged
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources: &small
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: work, mountPath: /work}
+            - {name: scripts, mountPath: /etc/delivery-scripts, readOnly: true}
+      container:
+        image: alpine/git:v2.54.0
+        command: [sh, /etc/delivery-scripts/commit.sh]
+        env:
+          - {name: SOURCE, value: /work/resources.yaml}
+          - {name: TARGET, value: "projects/{{workflow.parameters.project}}/{{workflow.parameters.environment}}/resources.yaml"}
+          - {name: SUBJECT, value: "Sync resources of {{workflow.parameters.project}} {{workflow.parameters.environment}}"}
+          - {name: BODY, value: "Sync {{workflow.parameters.sync}}"}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        # ssh needs a passwd entry for its user, and the image has one only for root. No capability is kept.
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources: *small
+        volumeMounts:
+          - {name: work, mountPath: /work}
+          - {name: scripts, mountPath: /etc/delivery-scripts, readOnly: true}
+          - {name: deploy-key, mountPath: /var/run/delivery/deploy-key, readOnly: true}
+          - {name: known-hosts, mountPath: /etc/delivery, readOnly: true}
+      volumes:
+        - name: work
+          emptyDir: {}
+        - name: deploy-key
+          secret:
+            secretName: gitops-deploy-key
+            defaultMode: 0440
+        - name: known-hosts
+          configMap:
+            name: delivery-known-hosts
+        - name: scripts
+          configMap:
+            name: delivery-scripts

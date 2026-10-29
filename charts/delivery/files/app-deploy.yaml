@@ -1,0 +1,181 @@
+# One Deployment: deploy one Release (an image pinned by digest) to one Project environment (agent-platform
+# docs/APP_DELIVERY.md). Agent Delivery is the only submitter and names the Workflow deploy-<Deployment ID>. Every
+# parameter comes from Agent Delivery, which chose the environment and its host from its environment profile.
+# Cluster settings come from ConfigMap delivery-settings. Result: url (https://<host>).
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: app-deploy
+spec:
+  entrypoint: deployment
+  serviceAccountName: delivery-runner
+  activeDeadlineSeconds: 1800
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 86400
+  # Failed Pods stay until the TTL so Agent Delivery can return their logs.
+  podGC:
+    strategy: OnWorkflowSuccess
+  securityContext:
+    fsGroup: 1000
+  arguments:
+    parameters:
+      - name: deployment
+      - name: project
+      - name: environment
+      # The Release image: <registry>/<project>@sha256:<digest>.
+      - name: image
+      # The declaration of this environment with defaults filled in (JSON {runtime, environment}).
+      - name: application
+      - name: host
+  templates:
+    - name: deployment
+      dag:
+        tasks:
+          - name: deploy
+            template: deploy
+          - name: verify
+            template: verify
+            depends: deploy
+
+    # Records the image and the declaration in projects/<project>/<environment>/app.yaml as values of charts/app (the
+    # opspresso app chart); Argo CD deploys it. The init container checks the parameters and renders the values with
+    # render.jq; the push uses a deploy key that can write to the GitOps repository only.
+    - name: deploy
+      serviceAccountName: delivery-git
+      activeDeadlineSeconds: 300
+      initContainers:
+        - name: render
+          image: alpine/k8s:1.37.1
+          command: [sh, -euc]
+          args:
+            - |
+              # The parameters name a path in the GitOps repository and the image to run: refuse anything else.
+              printf '%s' "$PROJECT" | grep -qE '^[a-z][a-z0-9-]{1,30}[a-z0-9]$' || { echo "Invalid project $PROJECT"; exit 1; }
+              printf '%s' "$ENVIRONMENT" | grep -qE '^[a-z][a-z0-9]{1,11}$' || { echo "Invalid environment $ENVIRONMENT"; exit 1; }
+              case "$IMAGE" in "${REGISTRY}/${PROJECT}@sha256:"*) ;; *) echo "Image $IMAGE is not an image of ${REGISTRY}/${PROJECT} pinned by digest"; exit 1;; esac
+              printf '%s' "${IMAGE#*@sha256:}" | grep -qE '^[a-f0-9]{64}$' || { echo "Invalid digest in $IMAGE"; exit 1; }
+              { echo "# Written by the app-deploy workflow for Deployment ${DEPLOYMENT}. Do not edit."
+                jq -n --argjson application "$APPLICATION" --arg deployment "$DEPLOYMENT" --arg image "$IMAGE" \
+                  -f /etc/delivery-scripts/render.jq | yq -p json -o yaml; } > /work/app.yaml
+          env:
+            - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+            - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
+            - {name: DEPLOYMENT, value: "{{workflow.parameters.deployment}}"}
+            - {name: IMAGE, value: "{{workflow.parameters.image}}"}
+            - {name: APPLICATION, value: "{{workflow.parameters.application}}"}
+            - {name: HOME, value: /tmp}
+          envFrom:
+            - configMapRef:
+                name: delivery-settings
+          securityContext: &unprivileged
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources: &small
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: work, mountPath: /work}
+            - {name: scripts, mountPath: /etc/delivery-scripts, readOnly: true}
+      container:
+        image: alpine/git:v2.54.0
+        command: [sh, /etc/delivery-scripts/commit.sh]
+        env:
+          - {name: SOURCE, value: /work/app.yaml}
+          - {name: TARGET, value: "projects/{{workflow.parameters.project}}/{{workflow.parameters.environment}}/app.yaml"}
+          - {name: SUBJECT, value: "Deploy {{workflow.parameters.project}} {{workflow.parameters.environment}} {{workflow.parameters.image}}"}
+          - {name: BODY, value: "Deployment {{workflow.parameters.deployment}}"}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        # ssh needs a passwd entry for its user, and the image has one only for root. No capability is kept; the
+        # shared volume is writable through the fsGroup.
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources: *small
+        volumeMounts:
+          - {name: work, mountPath: /work}
+          - {name: scripts, mountPath: /etc/delivery-scripts, readOnly: true}
+          - {name: deploy-key, mountPath: /var/run/delivery/deploy-key, readOnly: true}
+          - {name: known-hosts, mountPath: /etc/delivery, readOnly: true}
+      volumes:
+        - name: work
+          emptyDir: {}
+        - name: deploy-key
+          secret:
+            secretName: gitops-deploy-key
+            defaultMode: 0440
+        - name: known-hosts
+          configMap:
+            name: delivery-known-hosts
+        - name: scripts
+          configMap:
+            name: delivery-scripts
+
+    # Waits until Argo CD rolled out this Deployment and the public host answers on the health path.
+    - name: verify
+      serviceAccountName: delivery-verify
+      activeDeadlineSeconds: 900
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            namespace="app-${PROJECT}-${ENVIRONMENT}"
+            health=$(printf '%s' "$APPLICATION" | jq -r '.runtime.health // "/health"')
+            digest="${IMAGE#*@}"
+            echo "Waiting for Deployment app in $namespace to run Deployment ${DEPLOYMENT} @${digest}"
+            deadline=$(( $(date +%s) + 600 ))
+            while :; do
+              state=$(kubectl get deployment app -n "$namespace" -o json 2>/dev/null || true)
+              # The Deployment annotation proves that this Deployment's commit rolled out, even when the image is the same.
+              if [ -n "$state" ] && printf '%s' "$state" | jq -e --arg digest "$digest" --arg deployment "$DEPLOYMENT" '
+                  (.spec.template.spec.containers[0].image | endswith("@" + $digest))
+                  and (.spec.template.metadata.annotations["opspresso.com/deployment"] == $deployment)
+                  and (.status.observedGeneration // 0) >= .metadata.generation
+                  and (.status.updatedReplicas // 0) == (.status.replicas // -1)
+                  and (.status.availableReplicas // 0) == (.status.replicas // -1)
+                  and (.status.replicas // 0) > 0' >/dev/null; then
+                break
+              fi
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                echo "The rollout did not finish in 10 minutes."
+                kubectl get pods -n "$namespace" -o wide || true
+                kubectl get events -n "$namespace" --sort-by=.lastTimestamp | tail -n 20 || true
+                exit 1
+              fi
+              sleep 10
+            done
+            url="https://${HOST}"
+            echo "Rollout finished. Checking ${url}${health}"
+            deadline=$(( $(date +%s) + 180 ))
+            until curl -fsS -o /dev/null --max-time 10 "${url}${health}"; do
+              if [ "$(date +%s)" -ge "$deadline" ]; then echo "${url}${health} did not answer with 2xx in 3 minutes"; exit 1; fi
+              sleep 5
+            done
+            printf '%s' "$url" > /tmp/url
+            echo "${url}${health} answered with 2xx"
+        env:
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
+          - {name: APPLICATION, value: "{{workflow.parameters.application}}"}
+          - {name: IMAGE, value: "{{workflow.parameters.image}}"}
+          - {name: HOST, value: "{{workflow.parameters.host}}"}
+          - {name: DEPLOYMENT, value: "{{workflow.parameters.deployment}}"}
+          - {name: HOME, value: /tmp}
+        securityContext: *unprivileged
+        resources: *small
+      outputs:
+        parameters:
+          - name: url
+            globalName: url
+            valueFrom:
+              path: /tmp/url

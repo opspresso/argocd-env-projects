@@ -12,6 +12,8 @@ data:
   GITOPS_BRANCH: {{ .Values.gitops.branch | quote }}
   GIT_AUTHOR_NAME: {{ .Values.gitops.authorName | quote }}
   GIT_AUTHOR_EMAIL: {{ .Values.gitops.authorEmail | quote }}
+  # The kro instance kinds that resource-sync may write (space separated). AppProject projects must allow each kind.
+  RESOURCE_KINDS: {{ join " " .Values.resourceKinds | quote }}
 ---
 # The private key of the write deploy key of the GitOps repository (deploy step only).
 apiVersion: external-secrets.io/v1
@@ -41,11 +43,14 @@ data:
     {{ . }}
     {{- end }}
 ---
-# The values renderer of the deploy step (files/render.jq); scripts/test.sh checks charts/app against its output.
+# Scripts of the GitOps steps: the values renderer of the deploy step (scripts/test.sh checks charts/app against its
+# output), the resource check of resource-sync and the commit that both use.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: delivery-render
+  name: delivery-scripts
 data:
-  render.jq: |
-{{ .Files.Get "files/render.jq" | indent 4 }}
+{{- range list "render.jq" "check-resources.sh" "commit.sh" }}
+  {{ . }}: |
+{{ $.Files.Get (printf "files/%s" .) | indent 4 }}
+{{- end }}

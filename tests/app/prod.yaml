@@ -1,6 +1,7 @@
-delivery: 11111111-1111-4111-8111-111111111111
-revision: 0123456789abcdef0123456789abcdef01234567
+deployment: 11111111-1111-4111-8111-111111111111
 app:
+  controller:
+    enabled: true
   image:
     reference: 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   replicaCount: 2
@@ -18,7 +19,11 @@ app:
   pdb:
     enabled: true
   service:
+    enabled: true
     targetPort: 3000
+  routing:
+    httpRoute:
+      enabled: true
   env:
     - name: PORT
       value: "3000"
@@ -50,8 +55,7 @@ app:
     annotations:
       force-sync: 11111111-1111-4111-8111-111111111111
   podAnnotations:
-    opspresso.com/delivery: 11111111-1111-4111-8111-111111111111
-    opspresso.com/revision: 0123456789abcdef0123456789abcdef01234567
+    opspresso.com/deployment: 11111111-1111-4111-8111-111111111111
   command:
     - node
   args:
