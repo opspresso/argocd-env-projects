@@ -1,16 +1,1 @@
-# Written by the resource-sync workflow for Sync cf9ebfe5-94d1-49dd-8ced-05c0e35e0d5b. Do not edit.
-apiVersion: kro.run/v1alpha1
-kind: ValkeyCache
-metadata:
-  name: cache
-  namespace: app-e2e-hello-prod
-  labels:
-    opspresso.com/project: e2e-hello
-    opspresso.com/environment: prod
-    opspresso.com/resource: 353d50a9-2a75-428e-9a82-094dc026ea7f
-spec:
-  maxDataStorageGiB: 1
-  maxECPUPerSecond: 1000
-  passwordSecret:
-    name: app-env
-    key: CACHE_VALKEY_PASSWORD
+# Written by the resource-sync workflow for Sync 912d55c2-aefd-473c-96eb-4c43e83516d4. Do not edit.
