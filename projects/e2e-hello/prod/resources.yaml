@@ -1,1 +1,12 @@
-# Written by the resource-sync workflow for Sync f3e4601b-3ba1-46ee-9564-b8e7718c1c87. Do not edit.
+# Written by the resource-sync workflow for Sync 84e778bd-8522-4ac7-92cd-1ef11676a068. Do not edit.
+apiVersion: kro.run/v1alpha1
+kind: S3Bucket
+metadata:
+  name: files
+  namespace: app-e2e-hello-prod
+  labels:
+    opspresso.com/project: e2e-hello
+    opspresso.com/environment: prod
+    opspresso.com/resource: e5f41531-afa4-4d3c-94d2-ca4342a6ffd6
+spec:
+  versioning: false
