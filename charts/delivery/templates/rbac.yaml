@@ -109,7 +109,7 @@ metadata:
   name: agent-delivery-resources
 rules:
   - apiGroups: [kro.run]
-    resources: [rdspostgres]
+    resources: [rdspostgres, s3buckets, valkeycaches]
     verbs: [get, list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
