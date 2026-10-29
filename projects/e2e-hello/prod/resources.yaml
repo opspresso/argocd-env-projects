@@ -1,18 +1,1 @@
-# Written by the resource-sync workflow for Sync d26b2624-22f8-4660-af35-6758606e8482. Do not edit.
-apiVersion: kro.run/v1alpha1
-kind: RdsPostgres
-metadata:
-  name: verify
-  namespace: app-e2e-hello-prod
-  labels:
-    opspresso.com/project: e2e-hello
-    opspresso.com/environment: prod
-    opspresso.com/resource: 5bc2fe01-1a23-4c9f-a10a-ae129d78481e
-spec:
-  dbName: app
-  username: app
-  passwordSecret:
-    name: app-env
-    key: VERIFY_PGPASSWORD
-  instanceClass: db.t4g.micro
-  storageGiB: 20
+# Written by the resource-sync workflow for Sync f3e4601b-3ba1-46ee-9564-b8e7718c1c87. Do not edit.
