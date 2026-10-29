@@ -28,6 +28,8 @@ for name, entry in ENTRYPOINTS.items():
         o["globalName"] for t in spec["templates"] for o in t.get("outputs", {}).get("parameters", []) if "globalName" in o
     )
     print(name, "outputs", " ".join(sorted(set(outputs))))
+    mutexes = [m["name"] for m in spec.get("synchronization", {}).get("mutexes", [])]
+    print(name, "mutexes", " ".join(mutexes))
     for step in spec["templates"]:
         if "dag" in step:
             continue

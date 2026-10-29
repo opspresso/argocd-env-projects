@@ -8,6 +8,12 @@ metadata:
   name: app-deploy
 spec:
   entrypoint: deployment
+  # One deployment per environment at a time. Agent Delivery already keeps one unfinished Deployment per environment,
+  # but its record can end (for example delivery_unavailable) while the Workflow still runs. Waiting here keeps two
+  # deploy steps from committing app.yaml in turn while an older verify waits for a rollout that was replaced.
+  synchronization:
+    mutexes:
+      - name: "deploy-{{workflow.parameters.project}}-{{workflow.parameters.environment}}"
   serviceAccountName: delivery-runner
   activeDeadlineSeconds: 1800
   ttlStrategy:
