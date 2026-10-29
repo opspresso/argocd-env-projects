@@ -100,3 +100,27 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.submitter.serviceAccount }}
     namespace: {{ .Values.submitter.namespace }}
+---
+# Agent Delivery reads the status of the kro instances that resource-sync writes into app-* namespaces and records the
+# resources as ready or failed. Read only: instances hold Secret references, never values.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-delivery-resources
+rules:
+  - apiGroups: [kro.run]
+    resources: ["*"]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-delivery-resources
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agent-delivery-resources
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.submitter.serviceAccount }}
+    namespace: {{ .Values.submitter.namespace }}
