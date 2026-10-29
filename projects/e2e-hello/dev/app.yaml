@@ -1,0 +1,54 @@
+# Written by the app-delivery workflow for Delivery 3de02d6b-a28f-4868-9558-5adac3150b61. Do not edit.
+delivery: 3de02d6b-a28f-4868-9558-5adac3150b61
+revision: 31ff051ca808ee9dec67db42f1b3c9925b9d12de
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/e2e-hello@sha256:3cf52778cb94d584c128ad8ede4e07e1fc71e483ec8c161af9325d9daf1795f7
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+    - name: LOG_LEVEL
+      value: info
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: 3de02d6b-a28f-4868-9558-5adac3150b61
+  podAnnotations:
+    opspresso.com/delivery: 3de02d6b-a28f-4868-9558-5adac3150b61
+    opspresso.com/revision: 31ff051ca808ee9dec67db42f1b3c9925b9d12de

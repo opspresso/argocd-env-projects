@@ -2,7 +2,7 @@ apiVersion: v2
 name: project
 description: One environment of an application that Agent Delivery deploys, on the opspresso app chart
 type: application
-version: v2.2.1
+version: v2.3.0
 dependencies:
   - name: app
     repository: https://opspresso.github.io/helm-charts

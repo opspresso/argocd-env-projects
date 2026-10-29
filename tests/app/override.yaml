@@ -2,7 +2,9 @@
 app:
   tenant:
     project: other
-    environment: dev
+    environment: staging
+    environments: [dev, staging, prod]
+    primaryEnvironment: staging
     domain: agrt.dev
   routing:
     hosts: [studio.agrt.dev]
