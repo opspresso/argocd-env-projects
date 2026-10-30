@@ -144,7 +144,7 @@ spec:
             actual=$(sha256sum application.yaml | cut -d' ' -f1)
             if [ "$actual" != "$APPLICATION_SHA256" ]; then
               echo "application.yaml at this revision ($actual) differs from the one applied to Agent Runway ($APPLICATION_SHA256). Apply it with project_apply and build again."
-              # Agent Runway reports application_changed for this exit code only (agent-delivery APPLICATION_CHANGED_EXIT_CODE).
+              # Agent Runway reports application_changed for this exit code only (agent-runway APPLICATION_CHANGED_EXIT_CODE).
               exit 3
             fi
             printf '%s' "$RUNTIME" > /work/runtime.json
