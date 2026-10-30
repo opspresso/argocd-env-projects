@@ -18,7 +18,7 @@ for name, entry in ENTRYPOINTS.items():
     spec = template["spec"]
     assert template["metadata"]["name"] == name
     assert spec["entrypoint"] == entry, name
-    # Agent Delivery reads results and logs: Workflows stay 1 day. The build and deploy steps keep every Pod as long,
+    # Agent Runway reads results and logs: Workflows stay 1 day. The build and deploy steps keep every Pod as long,
     # so deployment_logs can return a successful step's output too; resource-sync output is not read.
     assert spec["ttlStrategy"] == {"secondsAfterSuccess": 86400, "secondsAfterFailure": 86400}, name
     if name in ("app-build", "app-deploy"):

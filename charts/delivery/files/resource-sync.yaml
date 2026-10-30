@@ -1,7 +1,7 @@
-# One resource sync: write the namespaced resources of one Project environment, which Agent Delivery rendered as kro
+# One resource sync: write the namespaced resources of one Project environment, which Agent Runway rendered as kro
 # instances, to projects/<project>/<environment>/resources.yaml (agent-platform docs/DELIVERY_V2.md D4). Argo CD
-# applies the file in namespace app-<project>-<environment>; Agent Delivery reads the instance status there.
-# Agent Delivery is the only submitter and names the Workflow resources-<Sync ID>. It holds no GitOps credential:
+# applies the file in namespace app-<project>-<environment>; Agent Runway reads the instance status there.
+# Agent Runway is the only submitter and names the Workflow resources-<Sync ID>. It holds no GitOps credential:
 # only this step's deploy key writes. Removing every resource of the environment needs the explicit document
 # {apiVersion: v1, kind: List, items: []}; an empty manifest is refused.
 apiVersion: argoproj.io/v1alpha1
@@ -20,7 +20,7 @@ spec:
   ttlStrategy:
     secondsAfterSuccess: 86400
     secondsAfterFailure: 86400
-  # Failed Pods stay until the TTL so Agent Delivery can return their logs.
+  # Failed Pods stay until the TTL so Agent Runway can return their logs.
   podGC:
     strategy: OnWorkflowSuccess
   securityContext:

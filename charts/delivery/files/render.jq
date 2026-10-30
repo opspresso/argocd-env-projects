@@ -1,4 +1,4 @@
-# Renders projects/<project>/<environment>/app.yaml for charts/app (the opspresso app chart) from Agent Delivery's
+# Renders projects/<project>/<environment>/app.yaml for charts/app (the opspresso app chart) from Agent Runway's
 # normalized declaration. Inputs: $application (JSON {runtime, environment}), $deployment, $image (pinned by digest).
 ($application.runtime) as $r
 | ($application.environment) as $e

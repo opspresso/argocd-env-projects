@@ -2,14 +2,14 @@
 
 Working rules for coding agents in this repository (`CLAUDE.md` is a symlink to this file).
 
-This repository is the GitOps home of the apps that Agent Delivery deploys. The contract is
+This repository is the GitOps home of the apps that Agent Runway deploys. The contract is
 `agent-platform/docs/APP_DELIVERY.md` and `docs/DELIVERY_V2.md`; [README.md](README.md) explains the layout and the Delivery steps.
 
 ## Ownership
 
 - `projects/<slug>/<env>/app.yaml` is written only by the `deploy` step of the `app-deploy` workflow, and
   `projects/<slug>/<env>/resources.yaml` only by the `write` step of the `resource-sync` workflow. Never edit, add or
-  rename these files by hand; change the app's `application.yaml` or its resources in Agent Delivery instead.
+  rename these files by hand; change the app's `application.yaml` or its resources in Agent Runway instead.
 - `charts/app` and `charts/delivery` change through reviewed pull requests.
 - The Argo CD AppProjects, the `app-delivery` Application, the `projects` ApplicationSet and the allowed environment
   list (`app_delivery.environments`, `app_delivery.primary_environment`) live in
@@ -31,7 +31,7 @@ This repository is the GitOps home of the apps that Agent Delivery deploys. The 
   parameter.
 - Without `app.yaml` the chart renders only the tenant objects (no Deployment, Service or HTTPRoute), so
   `resources.yaml` can use Secret `app-env` before the first deployment. `render.jq` turns the workload on.
-- `charts/delivery/files/render.jq` is the only mapping from Agent Delivery's declaration to `app` chart values; the deploy step
+- `charts/delivery/files/render.jq` is the only mapping from Agent Runway's declaration to `app` chart values; the deploy step
   and `scripts/test.sh` both use it.
 - The app chart renders only the kinds that AppProject `projects` allows. Adding a kind needs a change there too.
 - `charts/delivery/files/{app-build,app-deploy,resource-sync}.yaml` are static. Argo's `{{...}}` parameters must not
@@ -39,7 +39,7 @@ This repository is the GitOps home of the apps that Agent Delivery deploys. The 
   (`render.jq`, `check-resources.sh`, `commit.sh`) through ConfigMap `delivery-scripts`.
 - Keep the WorkflowTemplate names, parameters, results and DAG task names of the Workflow contract in
   `docs/DELIVERY_V2.md` (`app-build`: `checkout`, `check-application`, `test`, `registry`, `build`; `app-deploy`:
-  `deploy`, `verify`; `resource-sync`: `write`). Agent Delivery submits them and maps failed tasks to its steps.
+  `deploy`, `verify`; `resource-sync`: `write`). Agent Runway submits them and maps failed tasks to its steps.
 - `resource-sync` and `app-deploy` hold a per-environment mutex (`resources-<project>-<environment>`,
   `deploy-<project>-<environment>`). Argo Workflows v4 accepts only `synchronization.mutexes`.
 - `resource-sync` writes only kro instances of the kinds in `resourceKinds` (charts/delivery values) in the

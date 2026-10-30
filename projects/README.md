@@ -7,5 +7,5 @@
 | `app.yaml` | `app-deploy` workflow의 `deploy` |
 | `resources.yaml` | `resource-sync` workflow의 `write` |
 
-값을 바꾸려면 앱 저장소의 `application.yaml`을 고치고 Agent Delivery `project_apply` 뒤에 다시 배포합니다.
-리소스는 Agent Delivery에서 만들고 지웁니다.
+값을 바꾸려면 앱 저장소의 `application.yaml`을 고치고 Agent Runway `project_apply` 뒤에 다시 배포합니다.
+리소스는 Agent Runway에서 만들고 지웁니다.

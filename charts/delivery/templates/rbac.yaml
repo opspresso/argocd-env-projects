@@ -68,7 +68,7 @@ subjects:
     name: delivery-verify
     namespace: {{ .Release.Namespace }}
 ---
-# Agent Delivery submits Deliveries and reads their state and step logs. It cannot change a template.
+# Agent Runway submits Deliveries and reads their state and step logs. It cannot change a template.
 # It creates each Workflow's checkout Secret but cannot read, change or delete any Secret.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -101,7 +101,7 @@ subjects:
     name: {{ .Values.submitter.serviceAccount }}
     namespace: {{ .Values.submitter.namespace }}
 ---
-# Agent Delivery reads the status of the kro instances that resource-sync writes into app-* namespaces and records the
+# Agent Runway reads the status of the kro instances that resource-sync writes into app-* namespaces and records the
 # resources as ready or failed. Read only: instances hold Secret references, never values.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

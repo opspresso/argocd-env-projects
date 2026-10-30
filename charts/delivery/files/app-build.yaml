@@ -1,6 +1,6 @@
 # One Release: test and build one revision of a Project into an image pinned by digest (agent-platform
-# docs/APP_DELIVERY.md). Agent Delivery is the only submitter and names the Workflow build-<Release ID>. Every
-# parameter comes from Agent Delivery; the app repository only provides the code. Cluster settings come from
+# docs/APP_DELIVERY.md). Agent Runway is the only submitter and names the Workflow build-<Release ID>. Every
+# parameter comes from Agent Runway; the app repository only provides the code. Cluster settings come from
 # ConfigMap delivery-settings. Results: revision (commit SHA) and image (<registry>/<project>@sha256:...).
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
@@ -13,7 +13,7 @@ spec:
   ttlStrategy:
     secondsAfterSuccess: 86400
     secondsAfterFailure: 86400
-  # Every step's Pod stays a day after the Workflow ends so Agent Delivery can return its logs. Set it here: without
+  # Every step's Pod stays a day after the Workflow ends so Agent Runway can return its logs. Set it here: without
   # podGC the controller's workflowDefaults (OnPodSuccess) remove each Pod as soon as it succeeds.
   podGC:
     strategy: OnWorkflowCompletion
@@ -73,7 +73,7 @@ spec:
                 - name: revision
                   value: "{{tasks.checkout.outputs.parameters.revision}}"
 
-    # Clones the requested ref and records the commit it resolves to. Agent Delivery writes Secret <workflow>-checkout
+    # Clones the requested ref and records the commit it resolves to. Agent Runway writes Secret <workflow>-checkout
     # before this step runs: an empty token clones a public repository; a token (GitHub App, contents:read on this one
     # repository) goes only into a one-shot header for github.com. Nothing is stored in /work/src/.git, which the test and
     # build steps read, and redirects are refused so the header never leaves github.com.
@@ -124,7 +124,7 @@ spec:
             valueFrom:
               path: /work/revision
 
-    # The file at this revision must be the one Agent Delivery validated, or the deployed settings would differ from it.
+    # The file at this revision must be the one Agent Runway validated, or the deployed settings would differ from it.
     - name: check-application
       activeDeadlineSeconds: 120
       # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
@@ -143,8 +143,8 @@ spec:
             if [ ! -f application.yaml ]; then echo "application.yaml is missing at this revision"; exit 1; fi
             actual=$(sha256sum application.yaml | cut -d' ' -f1)
             if [ "$actual" != "$APPLICATION_SHA256" ]; then
-              echo "application.yaml at this revision ($actual) differs from the one applied to Agent Delivery ($APPLICATION_SHA256). Apply it with project_apply and build again."
-              # Agent Delivery reports application_changed for this exit code only (agent-delivery APPLICATION_CHANGED_EXIT_CODE).
+              echo "application.yaml at this revision ($actual) differs from the one applied to Agent Runway ($APPLICATION_SHA256). Apply it with project_apply and build again."
+              # Agent Runway reports application_changed for this exit code only (agent-delivery APPLICATION_CHANGED_EXIT_CODE).
               exit 3
             fi
             printf '%s' "$RUNTIME" > /work/runtime.json

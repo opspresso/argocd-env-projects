@@ -92,7 +92,7 @@ fails "an invalid environment name is refused" "invalid name" profile "dev Prod"
 fails "the primary environment must be in the profile" "primaryEnvironment" profile "dev prod" live app todo dev tests/app/dev.yaml
 fails "a slug that ends with an environment is refused" "must not end with -dev" app todo-dev prod tests/app/prod.yaml
 fails "a tag instead of a digest is refused" "pin the image by digest" app todo dev tests/app/dev.yaml --set app.image.reference=nginx:latest
-fails "an invalid slug is refused" "not an Agent Delivery Project slug" app Todo dev tests/app/dev.yaml
+fails "an invalid slug is refused" "not an Agent Runway Project slug" app Todo dev tests/app/dev.yaml
 
 # A profile with more environments: each has its own namespace and host; the primary one is <slug>.<domain>.
 staging=$(profile "dev staging prod" prod app todo staging tests/app/dev.yaml)
@@ -123,10 +123,10 @@ for name in app-build app-deploy resource-sync; do
   expect "delivery renders WorkflowTemplate $name" "^  name: ${name}$" "$delivery"
 done
 secret_verbs=$(yq 'select(.kind == "Role" and .metadata.name == "agent-delivery") | .rules[] | select(.resources[] == "secrets") | .verbs | join(",")' <<<"$delivery")
-if [ "$secret_verbs" = "create" ]; then pass "Agent Delivery may only create Secrets"; else fail "Agent Delivery may only create Secrets ($secret_verbs)"; fi
-expect "Agent Delivery may submit Workflows" 'name: agent-delivery' "$delivery"
+if [ "$secret_verbs" = "create" ]; then pass "Agent Runway may only create Secrets"; else fail "Agent Runway may only create Secrets ($secret_verbs)"; fi
+expect "Agent Runway may submit Workflows" 'name: agent-delivery' "$delivery"
 resource_verbs=$(yq 'select(.kind == "ClusterRole" and .metadata.name == "agent-delivery-resources") | .rules[] | (.apiGroups | join(",")) + " " + (.verbs | join(","))' <<<"$delivery")
-if [ "$resource_verbs" = "kro.run get,list,watch" ]; then pass "Agent Delivery may only read kro instances"; else fail "Agent Delivery may only read kro instances ($resource_verbs)"; fi
+if [ "$resource_verbs" = "kro.run get,list,watch" ]; then pass "Agent Runway may only read kro instances"; else fail "Agent Runway may only read kro instances ($resource_verbs)"; fi
 refuse "Helm leaves no template of its own" '\{\{ *\.' "$delivery"
 expect "the runner executor has its token Secret" 'name: delivery-runner.service-account-token' "$delivery"
 expect "runner Pods reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$delivery"
@@ -135,24 +135,24 @@ fails "the API server address is required" "apiServer.cidrs is required" \
   helm template delivery charts/delivery --namespace app-delivery --set registry=x/projects --set pushRoleArn=arn:aws:iam::1:role/p
 expect "Argo parameters reach the WorkflowTemplates" '\{\{workflow\.parameters\.project\}\}' "$delivery"
 expect "resource-sync accepts the platform kro kinds" 'RESOURCE_KINDS: "RdsPostgres S3Bucket ValkeyCache"' "$delivery"
-expect "Agent Delivery reads every platform kro kind" 'resources: \[rdspostgres, s3buckets, valkeycaches\]' "$delivery"
+expect "Agent Runway reads every platform kro kind" 'resources: \[rdspostgres, s3buckets, valkeycaches\]' "$delivery"
 
 contract=$(python3 scripts/workflow_contract.py)
 line() { grep -E "^$1 $2( |$)" <<<"$contract" | cut -d' ' -f3-; }
-expect "app-build keeps the step names Agent Delivery maps" '^checkout check-application test registry build$' "$(line app-build tasks)"
-expect "app-build takes Agent Delivery's parameters" '^release project repository ref applicationSha256 runtime$' "$(line app-build parameters)"
+expect "app-build keeps the step names Agent Runway maps" '^checkout check-application test registry build$' "$(line app-build tasks)"
+expect "app-build takes Agent Runway's parameters" '^release project repository ref applicationSha256 runtime$' "$(line app-build parameters)"
 expect "app-build returns revision and image" '^image revision$' "$(line app-build outputs)"
-expect "app-deploy keeps the step names Agent Delivery maps" '^deploy verify$' "$(line app-deploy tasks)"
-expect "app-deploy takes Agent Delivery's parameters" '^deployment project environment image application host$' "$(line app-deploy parameters)"
+expect "app-deploy keeps the step names Agent Runway maps" '^deploy verify$' "$(line app-deploy tasks)"
+expect "app-deploy takes Agent Runway's parameters" '^deployment project environment image application host$' "$(line app-deploy parameters)"
 expect "app-deploy returns url" '^url$' "$(line app-deploy outputs)"
 expect "resource-sync has one write step" '^write$' "$(line resource-sync tasks)"
-expect "resource-sync takes Agent Delivery's parameters" '^sync project environment manifest$' "$(line resource-sync parameters)"
+expect "resource-sync takes Agent Runway's parameters" '^sync project environment manifest$' "$(line resource-sync parameters)"
 expect "resource-sync returns nothing" '^$' "$(line resource-sync outputs)"
 expect "one resource sync runs per environment" '^resources-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line resource-sync mutexes)"
 expect "one deployment runs per environment" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line app-deploy mutexes)"
 expect "builds are not serialized" '^$' "$(line app-build mutexes)"
 expect "only deploy and write hold the deploy key, as delivery-git" '^app-deploy:deploy:delivery-git resource-sync:write:delivery-git$' "$(line all deploy-key)"
-expect "a changed declaration exits 3 for Agent Delivery" 'exit 3' "$(cat charts/delivery/files/app-build.yaml)"
+expect "a changed declaration exits 3 for Agent Runway" 'exit 3' "$(cat charts/delivery/files/app-build.yaml)"
 expect "deploy refuses an image of another Project" 'is not an image of \$\{REGISTRY\}/\$\{PROJECT\} pinned by digest' "$(cat charts/delivery/files/app-deploy.yaml)"
 
 # resource-sync writes only allowed kro instances of the environment's namespace.
@@ -183,10 +183,10 @@ expect "an S3Bucket instance is written" '^kind: S3Bucket$' "$all"
 fails "two kinds with one name are refused" "uniquely named" check <<<"$(printf '%s\n---\n%s' "$rds" "${valkey/name: cache/name: main}")"
 fails "an empty manifest is refused" "manifest is empty" check </dev/null
 fails "a manifest of empty documents is refused" "no document" check <<<"$(printf -- '---\n# none\n')"
-# Agent Delivery's zero-resource manifest, decoded the way the write step decodes the parameter.
+# Agent Runway's zero-resource manifest, decoded the way the write step decodes the parameter.
 EMPTY_LIST='{"apiVersion":"v1","kind":"List","items":[]}'
 if out=$(printf '%s' "$EMPTY_LIST" | base64 | tr -d '\n' | base64 -d | check 2>&1) && [ -z "$out" ]; then
-  pass "Agent Delivery's empty List removes every resource"; else fail "Agent Delivery's empty List removes every resource ($out)"; fi
+  pass "Agent Runway's empty List removes every resource"; else fail "Agent Runway's empty List removes every resource ($out)"; fi
 fails "a List with items is refused" "only be the single document" check <<<'{"apiVersion":"v1","kind":"List","items":[{"kind":"Secret"}]}'
 fails "a List with other fields is refused" "only be the single document" check <<<'{"apiVersion":"v1","kind":"List","items":[],"metadata":{}}'
 fails "a List of another apiVersion is refused" "only be the single document" check <<<'{"apiVersion":"v2","kind":"List","items":[]}'
