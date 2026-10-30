@@ -42,7 +42,7 @@ app:
     project: ""
     environment: ""
     # The allowed environments (space separated) and the primary one, from app_delivery in argocd-env-addons (Agent
-    # Delivery's DELIVERY_ENVIRONMENTS). The primary environment is served on <project>.<domain>, any other on
+    # Delivery's RUNWAY_ENVIRONMENTS). The primary environment is served on <project>.<domain>, any other on
     # <project>-<environment>.<domain>. A string, not a list: a values file could add items to a list parameter.
     environments: ""
     primaryEnvironment: ""
