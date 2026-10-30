@@ -20,7 +20,7 @@ gitops:
 # -l kubernetes.io/service-name=kubernetes). Runner Pods reach only these private addresses, on 443.
 apiServer:
   cidrs: []
-# The Agent Delivery ServiceAccount that submits and observes Deliveries.
+# The Agent Runway ServiceAccount that submits and observes Deliveries.
 submitter:
   namespace: agent-delivery
   serviceAccount: agent-delivery

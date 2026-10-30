@@ -1,4 +1,4 @@
-# Checks the namespaced resources that Agent Delivery rendered for one environment and prints them as YAML.
+# Checks the namespaced resources that Agent Runway rendered for one environment and prints them as YAML.
 # Usage: sh check-resources.sh <namespace> "<kind> ..." < manifest.yaml > resources.yaml
 # Every document must be a uniquely named kro.run instance of an allowed kind in <namespace> (or with no namespace,
 # which Argo CD sets to the Application's namespace). Removing every resource deletes the environment's databases, so
@@ -13,7 +13,7 @@ manifest=$(cat)
 [ -n "$(printf '%s' "$manifest" | tr -d '[:space:]')" ] || fail "The manifest is empty. Send {apiVersion: v1, kind: List, items: []} to remove every resource."
 documents=$(printf '%s\n' "$manifest" | yq -o json -I 0 'select(. != null)')
 [ -n "$documents" ] || fail "The manifest has no document. Send {apiVersion: v1, kind: List, items: []} to remove every resource."
-# Agent Delivery sends exactly {"apiVersion":"v1","kind":"List","items":[]} (one JSON document) for zero resources.
+# Agent Runway sends exactly {"apiVersion":"v1","kind":"List","items":[]} (one JSON document) for zero resources.
 if printf '%s\n' "$documents" | jq -e -s 'any(.[]; .kind == "List")' >/dev/null; then
   printf '%s\n' "$documents" | jq -e -s '. == [{"apiVersion": "v1", "kind": "List", "items": []}]' >/dev/null \
     || fail 'A List may only be the single document {"apiVersion":"v1","kind":"List","items":[]} that removes every resource.'

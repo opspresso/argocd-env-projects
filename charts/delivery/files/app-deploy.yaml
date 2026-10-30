@@ -1,6 +1,6 @@
 # One Deployment: deploy one Release (an image pinned by digest) to one Project environment (agent-platform
-# docs/APP_DELIVERY.md). Agent Delivery is the only submitter and names the Workflow deploy-<Deployment ID>. Every
-# parameter comes from Agent Delivery, which chose the environment and its host from its environment profile.
+# docs/APP_DELIVERY.md). Agent Runway is the only submitter and names the Workflow deploy-<Deployment ID>. Every
+# parameter comes from Agent Runway, which chose the environment and its host from its environment profile.
 # Cluster settings come from ConfigMap delivery-settings. Result: url (https://<host>).
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
@@ -8,7 +8,7 @@ metadata:
   name: app-deploy
 spec:
   entrypoint: deployment
-  # One deployment per environment at a time. Agent Delivery already keeps one unfinished Deployment per environment,
+  # One deployment per environment at a time. Agent Runway already keeps one unfinished Deployment per environment,
   # but its record can end (for example delivery_unavailable) while the Workflow still runs. Waiting here keeps two
   # deploy steps from committing app.yaml in turn while an older verify waits for a rollout that was replaced.
   synchronization:
@@ -19,7 +19,7 @@ spec:
   ttlStrategy:
     secondsAfterSuccess: 86400
     secondsAfterFailure: 86400
-  # Every step's Pod stays a day after the Workflow ends so Agent Delivery can return its logs. Set it here: without
+  # Every step's Pod stays a day after the Workflow ends so Agent Runway can return its logs. Set it here: without
   # podGC the controller's workflowDefaults (OnPodSuccess) remove each Pod as soon as it succeeds.
   podGC:
     strategy: OnWorkflowCompletion

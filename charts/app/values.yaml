@@ -51,7 +51,7 @@ app:
     region: ap-northeast-2
     tenantSecretsRoleArn: ""
 
-  # Every Agent Delivery Variable of this environment, from the SSM path that the tenant role may read. The role reads
+  # Every Agent Runway Variable of this environment, from the SSM path that the tenant role may read. The role reads
   # only the paths that the session tags name. The delivery-tenant-secret-stores admission policy (argocd-env-apps
   # charts/delivery-tenants) allows the role only in namespace app-<project>-<env> whose labels equal the tags.
   externalSecrets:
@@ -86,7 +86,7 @@ app:
     optional: true
 
   # Default deny. Ingress from the namespace and the istio-system ingress; egress to the namespace, cluster DNS,
-  # the Agent Delivery pool PostgreSQL and public HTTPS only: no instance metadata, cluster or VPC addresses.
+  # the Agent Runway pool PostgreSQL and public HTTPS only: no instance metadata, cluster or VPC addresses.
   networkPolicy:
     enabled: true
     policyTypes: [Ingress, Egress]
@@ -132,7 +132,7 @@ app:
       pods: "12"
       services.loadbalancers: "0"
       services.nodeports: "0"
-      # Each RdsPostgres is a billed RDS instance. Agent Delivery has its own limit; this is the cluster's.
+      # Each RdsPostgres is a billed RDS instance. Agent Runway has its own limit; this is the cluster's.
       count/rdspostgres.kro.run: "2"
       # Each S3Bucket is a dedicated bucket and each ValkeyCache a billed serverless cache.
       count/s3buckets.kro.run: "2"
@@ -146,7 +146,7 @@ app:
       - |
         {{- $t := .Values.tenant }}
         {{- $envs := splitList " " (toString ($t.environments | default "")) | compact }}
-        {{- if not (regexMatch "^[a-z][a-z0-9-]{1,30}[a-z0-9]$" ($t.project | default "")) }}{{ fail (printf "tenant.project %q is not an Agent Delivery Project slug" $t.project) }}{{ end }}
+        {{- if not (regexMatch "^[a-z][a-z0-9-]{1,30}[a-z0-9]$" ($t.project | default "")) }}{{ fail (printf "tenant.project %q is not an Agent Runway Project slug" $t.project) }}{{ end }}
         {{- range $envs }}{{ if not (regexMatch "^[a-z][a-z0-9]{1,11}$" .) }}{{ fail (printf "tenant.environments has an invalid name %q" .) }}{{ end }}{{ end }}
         {{- if not (has $t.environment $envs) }}{{ fail (printf "tenant.environment %q is not one of tenant.environments %v" $t.environment $envs) }}{{ end }}
         {{- if not (has $t.primaryEnvironment $envs) }}{{ fail (printf "tenant.primaryEnvironment %q is not one of tenant.environments %v" $t.primaryEnvironment $envs) }}{{ end }}
