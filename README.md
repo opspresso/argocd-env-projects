@@ -64,7 +64,7 @@ flowchart LR
 ## 앱 주소
 
 환경 목록과 primary 환경은 argocd-env-addons의 `app_delivery.environments`·`app_delivery.primary_environment`가 정합니다.
-Agent Runway의 `DELIVERY_ENVIRONMENTS`와 같아야 합니다. 기본값은 `[dev, prod]`, primary는 `prod`입니다.
+Agent Runway의 `RUNWAY_ENVIRONMENTS`와 같아야 합니다. 기본값은 `[dev, prod]`, primary는 `prod`입니다.
 
 | Environment | 주소 |
 | --- | --- |
@@ -90,7 +90,7 @@ chart를 바꾸면 다음을 실행합니다. Helm 4와 Python `pyyaml`이 필�
 
 ## 환경 추가
 
-환경 목록은 argocd-env-addons `app_delivery.environments`와 argocd-env-apps의 Agent Runway `DELIVERY_ENVIRONMENTS`가 정합니다.
+환경 목록은 argocd-env-addons `app_delivery.environments`와 argocd-env-apps의 Agent Runway `RUNWAY_ENVIRONMENTS`가 정합니다.
 
 1. 사전 점검: 기존 Project slug가 `-<새 환경>`으로 끝나지 않는지 확인합니다. 끝나면 그 Project의 primary host가 다른 Project의 새 환경 host와 겹칩니다.
    ```bash
