@@ -60,7 +60,7 @@ app:
     refreshInterval: 5m
     secretStore:
       enabled: true
-      name: agent-delivery
+      name: agent-runway
       provider:
         aws:
           service: ParameterStore
@@ -73,12 +73,12 @@ app:
               value: "{{ .Values.tenant.environment }}"
     dataFrom:
       - find:
-          path: "{{ printf \"/agent-delivery/%s/%s/%s\" (required \"tenant.cluster is required\" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}"
+          path: "{{ printf \"/agent-runway/%s/%s/%s\" (required \"tenant.cluster is required\" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}"
           name:
             regexp: ".*"
         rewrite:
           - regexp:
-              source: "^{{ printf \"/agent-delivery/%s/%s/%s\" (required \"tenant.cluster is required\" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}/"
+              source: "^{{ printf \"/agent-runway/%s/%s/%s\" (required \"tenant.cluster is required\" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}/"
               target: ""
     # An app without Variables has no Secret: External Secrets creates none from an empty path, and deletes the
     # Secret when the last Variable is removed instead of keeping the values of deleted resources.

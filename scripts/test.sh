@@ -22,7 +22,7 @@ app() {
     --set "app.tenant.project=${project}" --set "app.tenant.environment=${environment}" \
     --set "app.tenant.environments=${ENVIRONMENTS}" --set "app.tenant.primaryEnvironment=${PRIMARY}" \
     --set app.tenant.domain=apps.rovr.dev --set app.tenant.cluster=eks-demo \
-    --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::123456789012:role/agent-delivery-tenant-secrets \
+    --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::123456789012:role/agent-runway-tenant-secrets \
     --set "app.routing.hosts[0]=${host}" "$@"
 }
 # Runs a command with another environment profile: profile <environments> <primary> <command...>.
@@ -57,7 +57,7 @@ expect "each Deployment refreshes app-env before the rollout" 'force-sync: "?111
 expect "the workload has a Service" 'kind: Service$' "$dev"
 expect "the workload has an HTTPRoute" 'kind: HTTPRoute$' "$dev"
 expect "SecretStore tags the Project" 'key: delivery-project' "$dev"
-expect "ExternalSecret reads this environment" "path: '?/agent-delivery/eks-demo/todo/dev'?$" "$dev"
+expect "ExternalSecret reads this environment" "path: '?/agent-runway/eks-demo/todo/dev'?$" "$dev"
 expect "app-env is deleted when the environment has no Variables" "deletionPolicy: Delete$" "$dev"
 expect "apps reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$dev"
 expect "egress excludes instance metadata" '- 169\.254\.0\.0/16' "$dev"
@@ -72,7 +72,7 @@ prod=$(app todo prod tests/app/prod.yaml -f tests/app/override.yaml)
 expect "prod host is <slug>.<domain>" '"todo.apps.rovr.dev"' "$prod"
 refuse "a values file cannot claim another domain" 'agrt.dev' "$prod"
 refuse "a values file cannot move the namespace" 'namespace: app-other' "$prod"
-refuse "a values file cannot rename the environment" '/agent-delivery/eks-demo/[a-z-]+/dev' "$prod"
+refuse "a values file cannot rename the environment" '/agent-runway/eks-demo/[a-z-]+/dev' "$prod"
 expect "maxReplicas above replicas adds an HPA" 'kind: HorizontalPodAutoscaler' "$prod"
 expect "HPA keeps the declared minimum" 'minReplicas: 2' "$prod"
 expect "two replicas add a PDB" 'kind: PodDisruptionBudget' "$prod"
@@ -97,7 +97,7 @@ fails "an invalid slug is refused" "not an Agent Runway Project slug" app Todo d
 # A profile with more environments: each has its own namespace and host; the primary one is <slug>.<domain>.
 staging=$(profile "dev staging prod" prod app todo staging tests/app/dev.yaml)
 expect "an added environment is served on <slug>-<env>.<domain>" '"todo-staging.apps.rovr.dev"' "$staging"
-expect "an added environment reads its own Variables" "path: '?/agent-delivery/eks-demo/todo/staging'?$" "$staging"
+expect "an added environment reads its own Variables" "path: '?/agent-runway/eks-demo/todo/staging'?$" "$staging"
 live=$(profile "dev live" live app todo live tests/app/prod.yaml)
 expect "the primary environment is served on <slug>.<domain>" '"todo.apps.rovr.dev"' "$live"
 
