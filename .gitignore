@@ -1,3 +1,55 @@
+# Windows image file caches
+Thumbs.db
+ehthumbs.db
+
+# Folder config file
+Desktop.ini
+
+# Recycle Bin used on file shares
+$RECYCLE.BIN/
+
+# Windows shortcuts
+*.lnk
+
+# Mac
 .DS_Store
+
+# JetBrains
+.idea/
+*.iml
+
+# Eclipse
+.settings/
+.metadata/
+.project
+
+# Build
+target/
+build/
+
+# Helm dependencies fetched by scripts/validate.py
 charts/*/charts/
 charts/*/Chart.lock
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Temp
+*.pid
+*.log
+*.tmp
+
+values.output.yaml
+realm.output.json
+
+# claude worktrees
+.claude/worktrees/
+
+# prompt files
+*.prompt.md
+*.prompt*.md
+
+# Local installation credentials and generated connection files
+install/*/.local/
