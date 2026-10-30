@@ -1,6 +1,6 @@
 # argocd-env-projects
 
-Agent Runway가 배포하는 앱의 GitOps 저장소입니다. Studio Agent가 Agent Runway MCP로 시작한 Delivery가 이 저장소에
+Agent Runway가 배포하는 앱의 GitOps 저장소입니다. Studio Agent가 Agent Runway MCP로 시작한 Deployment가 이 저장소에
 배포 값을 기록하고, Argo CD가 그 값을 EKS `eks-demo`에 동기화합니다.
 전체 계약은 [agent-platform `docs/APP_DELIVERY.md`](https://github.com/opspresso/agent-platform/blob/main/docs/APP_DELIVERY.md)와
 [`docs/DELIVERY_V2.md`](https://github.com/opspresso/agent-platform/blob/main/docs/DELIVERY_V2.md)에 있습니다.
@@ -26,7 +26,7 @@ Argo CD 객체는 [argocd-env-addons](https://github.com/opspresso/argocd-env-ad
   guard는 값 파일의 `app.raw`로 끌 수 있으므로 보조 방어입니다. 실제 경계는 `app.yaml`을 `deploy` 단계만 고정 매핑 `render.jq`로 쓰고,
   deploy key를 `delivery-git` 단계(`deploy`·`write`)만 가진다는 점입니다.
 
-## Delivery 흐름
+## 배포 흐름
 
 Agent Runway는 build 한 번의 결과를 Release로, Release를 한 환경에 배포하는 작업을 Deployment로 기록합니다.
 승격은 같은 Release(같은 image digest)를 다음 환경에 배포하는 것입니다.
