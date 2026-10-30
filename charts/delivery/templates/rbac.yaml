@@ -100,6 +100,11 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.submitter.serviceAccount }}
     namespace: {{ .Values.submitter.namespace }}
+{{- range .Values.submitter.additional }}
+  - kind: ServiceAccount
+    name: {{ .serviceAccount }}
+    namespace: {{ .namespace }}
+{{- end }}
 ---
 # Agent Runway reads the status of the kro instances that resource-sync writes into app-* namespaces and records the
 # resources as ready or failed. Read only: instances hold Secret references, never values.
@@ -124,3 +129,8 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.submitter.serviceAccount }}
     namespace: {{ .Values.submitter.namespace }}
+{{- range .Values.submitter.additional }}
+  - kind: ServiceAccount
+    name: {{ .serviceAccount }}
+    namespace: {{ .namespace }}
+{{- end }}

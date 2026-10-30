@@ -125,6 +125,16 @@ done
 secret_verbs=$(yq 'select(.kind == "Role" and .metadata.name == "agent-delivery") | .rules[] | select(.resources[] == "secrets") | .verbs | join(",")' <<<"$delivery")
 if [ "$secret_verbs" = "create" ]; then pass "Agent Runway may only create Secrets"; else fail "Agent Runway may only create Secrets ($secret_verbs)"; fi
 expect "Agent Runway may submit Workflows" 'name: agent-delivery' "$delivery"
+for kind in RoleBinding ClusterRoleBinding; do
+  name=agent-delivery
+  [ "$kind" = ClusterRoleBinding ] && name=agent-delivery-resources
+  subjects=$(yq "select(.kind == \"$kind\" and .metadata.name == \"$name\") | .subjects | map(.namespace + \"/\" + .name) | join(\",\")" <<<"$delivery")
+  if [ "$subjects" = "agent-delivery/agent-delivery,agent-runway/agent-runway" ]; then
+    pass "$kind permits both identities during the handoff"
+  else
+    fail "$kind has unexpected submitter identities ($subjects)"
+  fi
+done
 resource_verbs=$(yq 'select(.kind == "ClusterRole" and .metadata.name == "agent-delivery-resources") | .rules[] | (.apiGroups | join(",")) + " " + (.verbs | join(","))' <<<"$delivery")
 if [ "$resource_verbs" = "kro.run get,list,watch" ]; then pass "Agent Runway may only read kro instances"; else fail "Agent Runway may only read kro instances ($resource_verbs)"; fi
 refuse "Helm leaves no template of its own" '\{\{ *\.' "$delivery"
