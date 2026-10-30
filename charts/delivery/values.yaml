@@ -22,12 +22,8 @@ apiServer:
   cidrs: []
 # The Agent Runway ServiceAccount that submits and observes Deliveries.
 submitter:
-  namespace: agent-delivery
-  serviceAccount: agent-delivery
-  # The Runway identity can take over while the existing submitter remains active.
-  additional:
-    - namespace: agent-runway
-      serviceAccount: agent-runway
+  namespace: agent-runway
+  serviceAccount: agent-runway
 # The instance kinds of the platform's kro ResourceGraphDefinitions (argocd-env-addons charts/kro) that resource-sync
 # writes to projects/<slug>/<env>/resources.yaml.
 resourceKinds: [RdsPostgres, S3Bucket, ValkeyCache]

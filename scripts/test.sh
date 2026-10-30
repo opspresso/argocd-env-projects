@@ -122,20 +122,20 @@ delivery=$(helm template delivery charts/delivery --namespace app-delivery \
 for name in app-build app-deploy resource-sync; do
   expect "delivery renders WorkflowTemplate $name" "^  name: ${name}$" "$delivery"
 done
-secret_verbs=$(yq 'select(.kind == "Role" and .metadata.name == "agent-delivery") | .rules[] | select(.resources[] == "secrets") | .verbs | join(",")' <<<"$delivery")
+secret_verbs=$(yq 'select(.kind == "Role" and .metadata.name == "agent-runway") | .rules[] | select(.resources[] == "secrets") | .verbs | join(",")' <<<"$delivery")
 if [ "$secret_verbs" = "create" ]; then pass "Agent Runway may only create Secrets"; else fail "Agent Runway may only create Secrets ($secret_verbs)"; fi
-expect "Agent Runway may submit Workflows" 'name: agent-delivery' "$delivery"
+expect "Agent Runway may submit Workflows" 'name: agent-runway' "$delivery"
 for kind in RoleBinding ClusterRoleBinding; do
-  name=agent-delivery
-  [ "$kind" = ClusterRoleBinding ] && name=agent-delivery-resources
+  name=agent-runway
+  [ "$kind" = ClusterRoleBinding ] && name=agent-runway-resources
   subjects=$(yq "select(.kind == \"$kind\" and .metadata.name == \"$name\") | .subjects | map(.namespace + \"/\" + .name) | join(\",\")" <<<"$delivery")
-  if [ "$subjects" = "agent-delivery/agent-delivery,agent-runway/agent-runway" ]; then
-    pass "$kind permits both identities during the handoff"
+  if [ "$subjects" = "agent-runway/agent-runway" ]; then
+    pass "$kind permits the Runway identity"
   else
     fail "$kind has unexpected submitter identities ($subjects)"
   fi
 done
-resource_verbs=$(yq 'select(.kind == "ClusterRole" and .metadata.name == "agent-delivery-resources") | .rules[] | (.apiGroups | join(",")) + " " + (.verbs | join(","))' <<<"$delivery")
+resource_verbs=$(yq 'select(.kind == "ClusterRole" and .metadata.name == "agent-runway-resources") | .rules[] | (.apiGroups | join(",")) + " " + (.verbs | join(","))' <<<"$delivery")
 if [ "$resource_verbs" = "kro.run get,list,watch" ]; then pass "Agent Runway may only read kro instances"; else fail "Agent Runway may only read kro instances ($resource_verbs)"; fi
 refuse "Helm leaves no template of its own" '\{\{ *\.' "$delivery"
 expect "the runner executor has its token Secret" 'name: delivery-runner.service-account-token' "$delivery"
