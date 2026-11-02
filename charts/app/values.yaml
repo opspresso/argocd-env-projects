@@ -57,7 +57,8 @@ app:
   externalSecrets:
     enabled: true
     name: app-env
-    refreshInterval: 5m
+    # A chart server waits for its generated password here, so a new resource starts within a minute.
+    refreshInterval: 1m
     secretStore:
       enabled: true
       name: agent-runway
