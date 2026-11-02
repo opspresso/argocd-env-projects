@@ -1,17 +1,4 @@
-# Written by the resource-sync workflow for Sync 2c8edb1c-6d7c-4560-a383-04515a9f2f7c. Do not edit.
-apiVersion: kro.run/v1alpha1
-kind: DynamoTable
-metadata:
-  name: qa-table
-  namespace: app-e2e-hello-prod
-  labels:
-    opspresso.com/project: e2e-hello
-    opspresso.com/environment: prod
-    opspresso.com/resource: e09ad9e8-a5ae-4ed7-9e9a-c2741e29b359
-spec:
-  partitionKey: pk
-  sortKey: at
----
+# Written by the resource-sync workflow for Sync 656757cb-fcf6-4ad6-9a56-4361ac642f3a. Do not edit.
 apiVersion: kro.run/v1alpha1
 kind: DynamoTable
 metadata:
