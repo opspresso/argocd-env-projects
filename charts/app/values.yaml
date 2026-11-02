@@ -85,8 +85,8 @@ app:
     deletionPolicy: Delete
     optional: true
 
-  # Default deny. Ingress from the namespace and the istio-system ingress; egress to the namespace, cluster DNS,
-  # the Agent Runway pool PostgreSQL and public HTTPS only: no instance metadata, cluster or VPC addresses.
+  # Default deny. Ingress from the namespace and the istio-system ingress; egress to the namespace, cluster DNS
+  # and public HTTPS only: no instance metadata, cluster or VPC addresses.
   networkPolicy:
     enabled: true
     policyTypes: [Ingress, Egress]
@@ -109,12 +109,6 @@ app:
         ports:
           - {protocol: UDP, port: 53}
           - {protocol: TCP, port: 53}
-      - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: delivery-pool
-        ports:
-          - {protocol: TCP, port: 5432}
       - to:
           - ipBlock:
               cidr: 0.0.0.0/0
