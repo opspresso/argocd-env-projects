@@ -64,7 +64,8 @@ expect "egress excludes instance metadata" '- 169\.254\.0\.0/16' "$dev"
 expect "the environment has a ResourceQuota" 'kind: ResourceQuota' "$dev"
 expect "the ResourceQuota allows two RdsPostgres instances" 'count/rdspostgres.kro.run: "2"' "$dev"
 expect "the ResourceQuota allows two S3Bucket instances" 'count/s3buckets.kro.run: "2"' "$dev"
-expect "the ResourceQuota allows two ValkeyCache instances" 'count/valkeycaches.kro.run: "2"' "$dev"
+expect "the ResourceQuota allows two DynamoTable instances" 'count/dynamotables.kro.run: "2"' "$dev"
+expect "the ResourceQuota bounds volumes" 'persistentvolumeclaims: "4"' "$dev"
 refuse "one replica has no HPA" 'kind: HorizontalPodAutoscaler' "$dev"
 refuse "one replica has no PDB" 'kind: PodDisruptionBudget' "$dev"
 
@@ -135,8 +136,8 @@ for kind in RoleBinding ClusterRoleBinding; do
     fail "$kind has unexpected submitter identities ($subjects)"
   fi
 done
-resource_verbs=$(yq 'select(.kind == "ClusterRole" and .metadata.name == "agent-runway-resources") | .rules[] | (.apiGroups | join(",")) + " " + (.verbs | join(","))' <<<"$delivery")
-if [ "$resource_verbs" = "kro.run get,list,watch" ]; then pass "Agent Runway may only read kro instances"; else fail "Agent Runway may only read kro instances ($resource_verbs)"; fi
+resource_verbs=$(yq 'select(.kind == "ClusterRole" and .metadata.name == "agent-runway-resources") | .rules[] | (.apiGroups | join(",")) + " " + (.verbs | join(","))' <<<"$delivery" | paste -sd '|' -)
+if [ "$resource_verbs" = "kro.run get,list,watch|apps get,list,watch" ]; then pass "Agent Runway may only read kro instances and StatefulSets"; else fail "Agent Runway may only read kro instances and StatefulSets ($resource_verbs)"; fi
 refuse "Helm leaves no template of its own" '\{\{ *\.' "$delivery"
 expect "the runner executor has its token Secret" 'name: delivery-runner.service-account-token' "$delivery"
 expect "runner Pods reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$delivery"
@@ -144,8 +145,9 @@ expect "runner Pods reach the API server on 443" 'cidr: 172.20.0.1/32' "$deliver
 fails "the API server address is required" "apiServer.cidrs is required" \
   helm template delivery charts/delivery --namespace app-delivery --set registry=x/projects --set pushRoleArn=arn:aws:iam::1:role/p
 expect "Argo parameters reach the WorkflowTemplates" '\{\{workflow\.parameters\.project\}\}' "$delivery"
-expect "resource-sync accepts the platform kro kinds" 'RESOURCE_KINDS: "RdsPostgres S3Bucket ValkeyCache"' "$delivery"
-expect "Agent Runway reads every platform kro kind" 'resources: \[rdspostgres, s3buckets, valkeycaches\]' "$delivery"
+expect "resource-sync accepts the platform kro kinds" 'RESOURCE_KINDS: "RdsPostgres S3Bucket DynamoTable"' "$delivery"
+expect "resource-sync accepts the resource charts" 'RESOURCE_CHARTS: "postgres valkey"' "$delivery"
+expect "Agent Runway reads every platform kro kind" 'resources: \[rdspostgres, s3buckets, dynamotables\]' "$delivery"
 
 contract=$(python3 scripts/workflow_contract.py)
 line() { grep -E "^$1 $2( |$)" <<<"$contract" | cut -d' ' -f3-; }
@@ -166,8 +168,13 @@ expect "a changed declaration exits 3 for Agent Runway" 'exit 3' "$(cat charts/d
 expect "deploy refuses an image of another Project" 'is not an image of \$\{REGISTRY\}/\$\{PROJECT\} pinned by digest' "$(cat charts/delivery/files/app-deploy.yaml)"
 
 # resource-sync writes only allowed kro instances of the environment's namespace.
-kinds="RdsPostgres S3Bucket ValkeyCache"
-check() { sh charts/delivery/files/check-resources.sh app-todo-dev "$kinds"; }
+kinds="RdsPostgres S3Bucket DynamoTable"
+declared=$(mktemp -d)
+check() {
+  rm -rf "$declared"
+  sh charts/delivery/files/check-resources.sh app-todo-dev "$kinds" "postgres valkey" "$declared" "# header" || return
+  cat "$declared/resources.yaml"
+}
 rds='apiVersion: kro.run/v1alpha1
 kind: RdsPostgres
 metadata:
@@ -175,27 +182,50 @@ metadata:
 spec:
   passwordSecret: {name: app-env, key: MAIN_PGPASSWORD}'
 expect "an RdsPostgres instance is written" '^kind: RdsPostgres$' "$(check <<<"$rds" 2>&1)"
-valkey='apiVersion: kro.run/v1alpha1
-kind: ValkeyCache
+table='apiVersion: kro.run/v1alpha1
+kind: DynamoTable
 metadata:
-  name: cache
+  name: events
 spec:
-  passwordSecret: {key: CACHE_VALKEY_PASSWORD}'
+  partitionKey: pk'
 bucket='apiVersion: kro.run/v1alpha1
 kind: S3Bucket
 metadata:
   name: files
 spec:
   versioning: false'
-all=$(check <<<"$(printf '%s\n---\n%s\n---\n%s' "$rds" "$valkey" "$bucket")" 2>&1)
-expect "a ValkeyCache instance is written" '^kind: ValkeyCache$' "$all"
+all=$(check <<<"$(printf '%s\n---\n%s\n---\n%s' "$rds" "$table" "$bucket")" 2>&1)
+expect "a DynamoTable instance is written" '^kind: DynamoTable$' "$all"
 expect "an S3Bucket instance is written" '^kind: S3Bucket$' "$all"
-fails "two kinds with one name are refused" "uniquely named" check <<<"$(printf '%s\n---\n%s' "$rds" "${valkey/name: cache/name: main}")"
+fails "two kinds with one name are refused" "uniquely named" check <<<"$(printf '%s\n---\n%s' "$rds" "${table/name: events/name: main}")"
+release='apiVersion: runway.opspresso.com/v1alpha1
+kind: ChartRelease
+metadata:
+  name: db
+  labels: {opspresso.com/resource: 0123abcd-0123-4123-8123-0123456789ab}
+spec:
+  chart: postgres
+  version: 1.0.0
+  values:
+    passwordSecret: {key: DB_PGPASSWORD}
+    persistence: {storageGiB: 5}'
+check <<<"$(printf '%s\n---\n%s' "$rds" "$release")" >/dev/null
+file=$(cat "$declared/resources/db.yaml")
+expect "a ChartRelease is written as its values file" '^chart: postgres$' "$file"
+expect "the values file pins the chart version" '^chartVersion: 1.0.0$' "$file"
+expect "the values file names the Application" '^resourceId: 0123abcd0123412381230123456789ab$' "$file"
+expect "the values file keeps the chart values" 'storageGiB: 5' "$file"
+if grep -q ChartRelease "$declared/resources.yaml"; then fail "resources.yaml holds no ChartRelease"; else pass "resources.yaml holds no ChartRelease"; fi
+fails "a chart outside the list is refused" "ChartReleases of charts" check <<<"${release/chart: postgres/chart: app}"
+fails "the name app is refused" "ChartReleases of charts" check <<<"${release/name: db/name: app}"
+fails "an image override is refused" "ChartReleases of charts" check <<<"${release/storageGiB: 5\}/storageGiB: 5\}
+    image: \{repository: evil\}}"
+fails "a chart version without a fixed number is refused" "ChartReleases of charts" check <<<"${release/version: 1.0.0/version: latest}"
 fails "an empty manifest is refused" "manifest is empty" check </dev/null
 fails "a manifest of empty documents is refused" "no document" check <<<"$(printf -- '---\n# none\n')"
 # Agent Runway's zero-resource manifest, decoded the way the write step decodes the parameter.
 EMPTY_LIST='{"apiVersion":"v1","kind":"List","items":[]}'
-if out=$(printf '%s' "$EMPTY_LIST" | base64 | tr -d '\n' | base64 -d | check 2>&1) && [ -z "$out" ]; then
+if out=$(printf '%s' "$EMPTY_LIST" | base64 | tr -d '\n' | base64 -d | check 2>&1) && [ "$out" = "# header" ] && [ -z "$(ls "$declared/resources")" ]; then
   pass "Agent Runway's empty List removes every resource"; else fail "Agent Runway's empty List removes every resource ($out)"; fi
 fails "a List with items is refused" "only be the single document" check <<<'{"apiVersion":"v1","kind":"List","items":[{"kind":"Secret"}]}'
 fails "a List with other fields is refused" "only be the single document" check <<<'{"apiVersion":"v1","kind":"List","items":[],"metadata":{}}'
@@ -206,8 +236,8 @@ long=$(printf 'a%.0s' $(seq 50))
 expect "a 50-character name is written" "name: ${long}$" "$(check <<<"${rds/name: main/name: ${long}}" 2>&1)"
 fails "a 51-character name is refused" "uniquely named" check <<<"${rds/name: main/name: ${long}b}"
 fails "a name that ends with a hyphen is refused" "uniquely named" check <<<"${rds/name: main/name: main-}"
-fails "another kind is refused" "kinds \[RdsPostgres S3Bucket ValkeyCache\]" check <<<"$(printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: x\n')"
-fails "another API group is refused" "kinds \[RdsPostgres S3Bucket ValkeyCache\]" check <<<"${rds/kro.run/rds.services.k8s.aws}"
+fails "another kind is refused" "kinds \[RdsPostgres S3Bucket DynamoTable\]" check <<<"$(printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: x\n')"
+fails "another API group is refused" "kinds \[RdsPostgres S3Bucket DynamoTable\]" check <<<"${rds/kro.run/rds.services.k8s.aws}"
 fails "another namespace is refused" "namespace app-todo-dev" check <<<"${rds/name: main/name: main
   namespace: app-other-dev}"
 fails "a duplicate name is refused" "uniquely named" check <<<"$(printf '%s\n---\n%s' "$rds" "$rds")"

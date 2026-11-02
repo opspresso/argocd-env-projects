@@ -8,7 +8,7 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
 ## Ownership
 
 - `projects/<slug>/<env>/app.yaml` is written only by the `deploy` step of the `app-deploy` workflow, and
-  `projects/<slug>/<env>/resources.yaml` only by the `write` step of the `resource-sync` workflow. Never edit, add or
+  `projects/<slug>/<env>/resources.yaml` and `projects/<slug>/<env>/resources/<name>.yaml` only by the `write` step of the `resource-sync` workflow. Never edit, add or
   rename these files by hand; change the app's `application.yaml` or its resources in Agent Runway instead.
 - `charts/app` and `charts/delivery` change through reviewed pull requests.
 - The Argo CD AppProjects, the `app-delivery` Application, the `projects` ApplicationSet and the allowed environment
@@ -42,8 +42,10 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   `deploy`, `verify`; `resource-sync`: `write`). Agent Runway submits them and maps failed tasks to its steps.
 - `resource-sync` and `app-deploy` hold a per-environment mutex (`resources-<project>-<environment>`,
   `deploy-<project>-<environment>`). Argo Workflows v4 accepts only `synchronization.mutexes`.
-- `resource-sync` writes only kro instances of the kinds in `resourceKinds` (charts/delivery values) in the
-  environment's namespace. AppProject `projects` must allow the same kinds.
+- `resource-sync` writes only kro instances of the kinds in `resourceKinds` and ChartReleases of the charts in
+  `resourceCharts` (charts/delivery values) in the environment's namespace. A ChartRelease may set only
+  `passwordSecret`, `persistence`, `maxMemoryMiB` and `peer`. AppProject `projects` must allow the same kinds and the
+  kinds those charts render.
 - Steps that run app code (`test`, `build`) get no Git credential, AWS identity or Kubernetes permission.
 
 ## Validation
