@@ -79,6 +79,7 @@ expect "HPA keeps the declared minimum" 'minReplicas: 2' "$prod"
 expect "two replicas add a PDB" 'kind: PodDisruptionBudget' "$prod"
 expect "command is set" 'command:' "$prod"
 expect "health path is probed" 'path: /healthz' "$prod"
+expect "apps reach the Pod Identity agent" 'cidr: 169.254.170.23/32' "$prod"
 
 fails "a release outside app-<slug>-<env> is refused" "release namespace" \
   helm template app charts/app --namespace app-todo-prod -f tests/app/dev.yaml --set app.tenant.project=todo --set app.tenant.environment=dev \
