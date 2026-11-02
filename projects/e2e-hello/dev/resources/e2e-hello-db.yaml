@@ -1,0 +1,15 @@
+# Written by the resource-sync workflow for Sync 0c16f04b-9b09-48ee-b97f-52fc77d94f65. Do not edit.
+passwordSecret:
+  name: app-env
+  key: E2E_HELLO_DB_PGPASSWORD
+persistence:
+  storageGiB: 5
+peer:
+  enabled: true
+  namespace: agent-forge-workspaces
+  podLabels:
+    app.kubernetes.io/name: agent-forge-sandbox
+chart: postgres
+chartVersion: 1.1.0
+resourceName: e2e-hello-db
+resourceId: 8eaac3a9d2f347359b5249f3556cbcc4
