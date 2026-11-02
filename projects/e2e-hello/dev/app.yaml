@@ -1,10 +1,10 @@
-# Written by the app-deploy workflow for Deployment 016d551a-326c-42fe-a255-848a08ff7a55. Do not edit.
-deployment: 016d551a-326c-42fe-a255-848a08ff7a55
+# Written by the app-deploy workflow for Deployment d44dab03-f336-43ca-8a0c-942d85d770b8. Do not edit.
+deployment: d44dab03-f336-43ca-8a0c-942d85d770b8
 app:
   controller:
     enabled: true
   image:
-    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/e2e-hello@sha256:d53c3841a638d8e01d469874fda56a0193af4937875ad3ff1c2236c8fc8fb6a2
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/e2e-hello@sha256:1980c0cf5093dc7016ca62c839bcfcb30eb31a85f7cb4880d6ff9a42c5e8d30f
   replicaCount: 1
   autoscaling:
     enabled: false
@@ -47,6 +47,6 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: 016d551a-326c-42fe-a255-848a08ff7a55
+      force-sync: d44dab03-f336-43ca-8a0c-942d85d770b8
   podAnnotations:
-    opspresso.com/deployment: 016d551a-326c-42fe-a255-848a08ff7a55
+    opspresso.com/deployment: d44dab03-f336-43ca-8a0c-942d85d770b8
