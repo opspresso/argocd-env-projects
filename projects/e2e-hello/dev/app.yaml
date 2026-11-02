@@ -1,5 +1,5 @@
-# Written by the app-deploy workflow for Deployment d44dab03-f336-43ca-8a0c-942d85d770b8. Do not edit.
-deployment: d44dab03-f336-43ca-8a0c-942d85d770b8
+# Written by the app-deploy workflow for Deployment af6353c9-e8be-4e81-a2dd-9ee9f79fe81f. Do not edit.
+deployment: af6353c9-e8be-4e81-a2dd-9ee9f79fe81f
 app:
   controller:
     enabled: true
@@ -47,6 +47,6 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: d44dab03-f336-43ca-8a0c-942d85d770b8
+      force-sync: af6353c9-e8be-4e81-a2dd-9ee9f79fe81f
   podAnnotations:
-    opspresso.com/deployment: d44dab03-f336-43ca-8a0c-942d85d770b8
+    opspresso.com/deployment: af6353c9-e8be-4e81-a2dd-9ee9f79fe81f
