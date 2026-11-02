@@ -1,0 +1,11 @@
+# Written by the resource-sync workflow for Sync 0edc630b-37f3-4b06-8ad3-f01727f4d6bd. Do not edit.
+passwordSecret:
+  name: app-env
+  key: VALKEY_PASSWORD
+persistence:
+  storageGiB: 1
+maxMemoryMiB: 128
+chart: valkey
+chartVersion: 1.1.0
+resourceName: e2e-hello
+resourceId: 73064f6925dd436abecb18efdc2751b9

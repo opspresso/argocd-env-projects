@@ -1,4 +1,4 @@
-# Written by the resource-sync workflow for Sync f47bb01a-eb60-4e94-9ecd-2b437bf32920. Do not edit.
+# Written by the resource-sync workflow for Sync 0edc630b-37f3-4b06-8ad3-f01727f4d6bd. Do not edit.
 apiVersion: kro.run/v1alpha1
 kind: RdsPostgres
 metadata:
