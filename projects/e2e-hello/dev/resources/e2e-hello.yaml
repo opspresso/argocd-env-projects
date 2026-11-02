@@ -1,4 +1,4 @@
-# Written by the resource-sync workflow for Sync 191f6ca7-1553-43c2-943d-7c4325a78dbf. Do not edit.
+# Written by the resource-sync workflow for Sync 9b7153ce-9382-4942-b224-63e85674cbce. Do not edit.
 passwordSecret:
   name: app-env
   key: VALKEY_PASSWORD
@@ -11,6 +11,6 @@ peer:
   podLabels:
     app.kubernetes.io/name: agent-forge-sandbox
 chart: valkey
-chartVersion: 1.0.0
+chartVersion: 1.1.0
 resourceName: e2e-hello
 resourceId: 164aa6e7f74b48f6b52fc48d170175d0
