@@ -1,22 +1,4 @@
-# Written by the resource-sync workflow for Sync 109a0b15-31ef-4222-bfcf-22bb4d360007. Do not edit.
-apiVersion: kro.run/v1alpha1
-kind: RdsPostgres
-metadata:
-  name: qa-rds
-  namespace: app-e2e-hello-prod
-  labels:
-    opspresso.com/project: e2e-hello
-    opspresso.com/environment: prod
-    opspresso.com/resource: a588e7c1-8aaa-4ff4-b26d-57d7ec71bc79
-spec:
-  dbName: app
-  username: app
-  passwordSecret:
-    name: app-env
-    key: QA_RDS_PGPASSWORD
-  instanceClass: db.t4g.micro
-  storageGiB: 20
----
+# Written by the resource-sync workflow for Sync 385de697-5e62-4198-94ca-a9d447997f8d. Do not edit.
 apiVersion: kro.run/v1alpha1
 kind: S3Bucket
 metadata:
