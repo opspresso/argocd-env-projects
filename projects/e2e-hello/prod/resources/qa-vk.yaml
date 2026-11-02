@@ -1,0 +1,11 @@
+# Written by the resource-sync workflow for Sync e78772e3-fe50-4819-950a-d7f3d24ec23f. Do not edit.
+passwordSecret:
+  name: app-env
+  key: QA_VK_VALKEY_PASSWORD
+persistence:
+  storageGiB: 1
+maxMemoryMiB: 128
+chart: valkey
+chartVersion: 1.0.0
+resourceName: qa-vk
+resourceId: 47ec2d74c0f2499eb2b431ce154ab37e

@@ -1,4 +1,16 @@
-# Written by the resource-sync workflow for Sync 8fa83f52-f84f-445d-a829-12ea925cfc55. Do not edit.
+# Written by the resource-sync workflow for Sync e78772e3-fe50-4819-950a-d7f3d24ec23f. Do not edit.
+apiVersion: kro.run/v1alpha1
+kind: S3Bucket
+metadata:
+  name: qa-s3
+  namespace: app-e2e-hello-prod
+  labels:
+    opspresso.com/project: e2e-hello
+    opspresso.com/environment: prod
+    opspresso.com/resource: 44073fc7-da30-4301-acd5-2f10285e6b46
+spec:
+  versioning: false
+---
 apiVersion: kro.run/v1alpha1
 kind: DynamoTable
 metadata:
