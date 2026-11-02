@@ -87,7 +87,8 @@ app:
     optional: true
 
   # Default deny. Ingress from the namespace and the istio-system ingress; egress to the namespace, cluster DNS,
-  # the Agent Runway pool PostgreSQL and public HTTPS only: no instance metadata, cluster or VPC addresses.
+  # the Agent Runway pool PostgreSQL, the node's EKS Pod Identity agent and public HTTPS only: no instance metadata,
+  # cluster or VPC addresses.
   networkPolicy:
     enabled: true
     policyTypes: [Ingress, Egress]
@@ -116,6 +117,12 @@ app:
                 kubernetes.io/metadata.name: delivery-pool
         ports:
           - {protocol: TCP, port: 5432}
+      # Apps read AWS credentials here, whether or not the namespace holds an AWS resource.
+      - to:
+          - ipBlock:
+              cidr: 169.254.170.23/32
+        ports:
+          - {protocol: TCP, port: 80}
       - to:
           - ipBlock:
               cidr: 0.0.0.0/0
