@@ -1,6 +1,7 @@
 # One resource sync: write the namespaced resources of one Project environment, which Agent Runway rendered as kro
-# instances, to projects/<project>/<environment>/resources.yaml (agent-platform docs/DELIVERY_V2.md D4). Argo CD
-# applies the file in namespace app-<project>-<environment>; Agent Runway reads the instance status there.
+# instances and ChartReleases, to projects/<project>/<environment>/resources.yaml and resources/<name>.yaml
+# (agent-platform docs/DELIVERY_RESOURCES.md). Argo CD applies them in namespace app-<project>-<environment>;
+# Agent Runway reads their status there.
 # Agent Runway is the only submitter and names the Workflow resources-<Sync ID>. It holds no GitOps credential:
 # only this step's deploy key writes. Removing every resource of the environment needs the explicit document
 # {apiVersion: v1, kind: List, items: []}; an empty manifest is refused.
@@ -40,8 +41,8 @@ spec:
             template: write
 
     # The init container checks the manifest: only the instance kinds of the platform's ResourceGraphDefinitions
-    # (RESOURCE_KINDS in delivery-settings), in this environment's namespace. AppProject projects enforces the same
-    # kinds when Argo CD applies the file.
+    # (RESOURCE_KINDS in delivery-settings) and the charts in RESOURCE_CHARTS, in this environment's namespace.
+    # AppProject projects enforces the same kinds and the chart repository when Argo CD applies them.
     - name: write
       serviceAccountName: delivery-git
       activeDeadlineSeconds: 300
@@ -56,8 +57,8 @@ spec:
               namespace="app-${PROJECT}-${ENVIRONMENT}"
               # Decode first: a manifest that is not base64 must fail, not become an empty file that removes every resource.
               printf '%s' "$MANIFEST" | base64 -d > /work/manifest.yaml
-              { echo "# Written by the resource-sync workflow for Sync ${SYNC}. Do not edit."
-                sh /etc/delivery-scripts/check-resources.sh "$namespace" "$RESOURCE_KINDS" < /work/manifest.yaml; } > /work/resources.yaml
+              sh /etc/delivery-scripts/check-resources.sh "$namespace" "$RESOURCE_KINDS" "$RESOURCE_CHARTS" /work/declaration \
+                "# Written by the resource-sync workflow for Sync ${SYNC}. Do not edit." < /work/manifest.yaml
               echo "Checked the resources of $namespace"
           env:
             - {name: PROJECT, value: "{{workflow.parameters.project}}"}
@@ -85,8 +86,8 @@ spec:
         image: alpine/git:v2.54.0
         command: [sh, /etc/delivery-scripts/commit.sh]
         env:
-          - {name: SOURCE, value: /work/resources.yaml}
-          - {name: TARGET, value: "projects/{{workflow.parameters.project}}/{{workflow.parameters.environment}}/resources.yaml"}
+          - {name: SOURCE, value: /work/declaration}
+          - {name: TARGET, value: "projects/{{workflow.parameters.project}}/{{workflow.parameters.environment}}"}
           - {name: SUBJECT, value: "Sync resources of {{workflow.parameters.project}} {{workflow.parameters.environment}}"}
           - {name: BODY, value: "Sync {{workflow.parameters.sync}}"}
           - {name: HOME, value: /tmp}

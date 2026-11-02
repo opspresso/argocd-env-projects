@@ -26,7 +26,9 @@ submitter:
   serviceAccount: agent-runway
 # The instance kinds of the platform's kro ResourceGraphDefinitions (argocd-env-addons charts/kro) that resource-sync
 # writes to projects/<slug>/<env>/resources.yaml.
-resourceKinds: [RdsPostgres, S3Bucket, ValkeyCache]
+resourceKinds: [RdsPostgres, S3Bucket, DynamoTable]
+# The opspresso charts that resource-sync declares in projects/<slug>/<env>/resources/<name>.yaml.
+resourceCharts: [postgres, valkey]
 # The cluster DNS Service IP (kube-dns). EKS Auto Mode answers DNS there instead of from kube-system Pods.
 dns:
   cidrs: [172.20.0.10/32]

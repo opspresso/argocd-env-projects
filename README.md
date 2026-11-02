@@ -12,7 +12,8 @@ Agent Runway가 배포하는 앱의 GitOps 저장소입니다. Studio Agent가 A
 | `charts/app/` | 앱 Environment 하나의 wrapper chart. [opspresso/helm-charts](https://github.com/opspresso/helm-charts)의 `app` chart(argocd-env-apps의 sample-node·agent-*와 같은 chart)의 설정으로 Deployment·Service·HTTPRoute·HPA·PDB·SecretStore·ExternalSecret·NetworkPolicy·ResourceQuota를 만든다. `app.yaml`이 없으면 Deployment·Service·HTTPRoute 없이 tenant 객체만 만든다. `app.raw`에는 환경·namespace·host·image digest를 검사하는 guard만 둔다 | 운영자(PR) |
 | `charts/delivery/` | namespace `app-delivery`의 Argo Workflows WorkflowTemplate `app-build`·`app-deploy`·`resource-sync`, 단계별 ServiceAccount·RBAC, 설정 | 운영자(PR) |
 | `projects/<slug>/<env>/app.yaml` | Environment 하나의 `app` chart 값: 이미지 digest, 복제 수, port, env, probe, 자원. `app-deploy`의 deploy 단계가 `charts/delivery/files/render.jq`로 Agent Runway의 선언에서 만든다 | `app-deploy` workflow만 |
-| `projects/<slug>/<env>/resources.yaml` | Environment 하나의 namespace 리소스(kro 인스턴스 `RdsPostgres`·`S3Bucket`·`ValkeyCache`). Agent Runway가 렌더링한 manifest를 `resource-sync`의 write 단계가 검사해 기록한다 | `resource-sync` workflow만 |
+| `projects/<slug>/<env>/resources.yaml` | Environment 하나의 AWS 전용 리소스(kro 인스턴스 `RdsPostgres`·`S3Bucket`·`DynamoTable`). Agent Runway가 렌더링한 manifest를 `resource-sync`의 write 단계가 검사해 기록한다 | `resource-sync` workflow만 |
+| `projects/<slug>/<env>/resources/<name>.yaml` | Kubernetes 전용 리소스 하나의 chart 이름·버전과 값(`postgres`·`valkey`, opspresso/helm-charts). ApplicationSet `project-resources`가 파일마다 Application `res-<리소스 ID>`를 만든다 | `resource-sync` workflow만 |
 | `scripts/test.sh` | 두 chart를 Argo CD와 같은 parameter로 렌더링하고 계약을 검사한다 | |
 
 Argo CD 객체는 [argocd-env-addons](https://github.com/opspresso/argocd-env-addons)의 `charts/argo-cd`가 선언합니다.
@@ -54,7 +55,7 @@ flowchart LR
 | `app-build` | `build` | `delivery-runner` | kaniko로 linux/arm64 이미지를 빌드해 commit SHA tag로 push한다. user namespace·privileged가 필요 없다 |
 | `app-deploy` | `deploy` | `delivery-git` | 이미지가 그 Project의 digest 고정 이미지인지 확인하고 `projects/<slug>/<env>/app.yaml`에 기록한다. 이 저장소에만 쓰기 권한이 있는 deploy key(SSM `/k8s/common/app-delivery/gitops-deploy-key`)로 push한다 |
 | `app-deploy` | `verify` | `delivery-verify` | rollout 완료와 `https://<host><health>`의 2xx 응답을 기다린다 |
-| `resource-sync` | `write` | `delivery-git` | manifest가 허용한 kro 인스턴스 종류(`resourceKinds`)이고 그 환경 namespace에 속하는지, 이름이 `^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$`이고 고유한지 확인하고 `projects/<slug>/<env>/resources.yaml`에 기록한다. 리소스를 모두 지우려면 `{apiVersion: v1, kind: List, items: []}` 문서를 보낸다. 빈 manifest는 거부한다 |
+| `resource-sync` | `write` | `delivery-git` | manifest가 허용한 kro 인스턴스 종류(`resourceKinds`) 또는 chart(`resourceCharts`)이고 그 환경 namespace에 속하는지, 이름이 `^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$`이고 고유한지 확인하고 `projects/<slug>/<env>/resources.yaml`과 `resources/<name>.yaml`을 통째로 바꾼다. 리소스를 모두 지우려면 `{apiVersion: v1, kind: List, items: []}` 문서를 보낸다. 빈 manifest는 거부한다 |
 
 `resource-sync`와 `app-deploy`는 환경마다 mutex(`resources-<slug>-<env>`, `deploy-<slug>-<env>`)를 잡습니다. 같은 환경의 다음 Workflow는 앞 Workflow가 끝날 때까지 `Pending`으로 기다리고, 다른 환경과 `app-build`는 기다리지 않습니다.
 
@@ -83,10 +84,11 @@ chart를 바꾸면 다음을 실행합니다. Helm 4와 Python `pyyaml`이 필�
 
 - `projects/`는 직접 고치지 않습니다. 값을 바꾸려면 앱 저장소의 `application.yaml`을 고치고 Agent Runway에 다시 적용한 뒤 새 Delivery를 시작합니다.
 - 앱을 내리려면 `projects/<slug>/<env>/` 디렉터리를 지우는 PR을 병합합니다. Argo CD가 Application과 그 리소스(kro 인스턴스 포함)를 지웁니다.
-  `RdsPostgres`는 final snapshot `<DB 식별자>-final-<인스턴스 UID>`만 남기고 RDS가 삭제됩니다. `ValkeyCache`는 snapshot 없이 삭제됩니다.
+  `RdsPostgres`는 final snapshot `<DB 식별자>-final-<인스턴스 UID>`만 남기고 RDS가 삭제됩니다. `DynamoTable`은 backup 없이 삭제됩니다.
+  `resources/<name>.yaml`의 `postgres`·`valkey`는 Application과 함께 PVC까지 삭제되어 데이터가 사라집니다.
   `S3Bucket`은 bucket이 비어 있을 때만 삭제됩니다. 객체가 남아 있으면 인스턴스가 `BucketNotEmpty` 메시지와 함께 남고 Application 삭제도 끝나지 않으므로,
   객체(버전 포함)를 지운 뒤 다시 확인합니다. namespace `app-<slug>-<env>`는 남으므로 확인한 뒤 지웁니다.
-- 환경 하나에 `RdsPostgres`·`S3Bucket`·`ValkeyCache`는 종류마다 2개까지입니다(ResourceQuota `count/rdspostgres.kro.run`·`count/s3buckets.kro.run`·`count/valkeycaches.kro.run`).
+- 환경 하나에 `RdsPostgres`·`S3Bucket`·`DynamoTable`은 종류마다 2개까지입니다(ResourceQuota `count/rdspostgres.kro.run`·`count/s3buckets.kro.run`·`count/dynamotables.kro.run`). 볼륨은 4개, 합계 200Gi까지입니다.
 
 ## 환경 추가
 

@@ -122,21 +122,24 @@ app:
         ports:
           - {protocol: TCP, port: 443}
 
-  # Bounds one environment on the shared cluster. pods covers maxReplicas (at most 10) and one surge Pod.
+  # Bounds one environment on the shared cluster. pods covers maxReplicas (at most 10), one surge Pod and the servers.
   resourceQuota:
     enabled: true
     hard:
       requests.cpu: "4"
       requests.memory: 8Gi
       limits.memory: 8Gi
-      pods: "12"
+      # Dedicated postgres and valkey resources run here too.
+      pods: "16"
+      persistentvolumeclaims: "4"
+      requests.storage: 200Gi
       services.loadbalancers: "0"
       services.nodeports: "0"
       # Each RdsPostgres is a billed RDS instance. Agent Runway has its own limit; this is the cluster's.
       count/rdspostgres.kro.run: "2"
-      # Each S3Bucket is a dedicated bucket and each ValkeyCache a billed serverless cache.
+      # Each S3Bucket is a dedicated bucket and each DynamoTable a dedicated table.
       count/s3buckets.kro.run: "2"
-      count/valkeycaches.kro.run: "2"
+      count/dynamotables.kro.run: "2"
 
   raw:
     enabled: true
