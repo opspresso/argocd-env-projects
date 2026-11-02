@@ -1,4 +1,4 @@
-# Written by the resource-sync workflow for Sync e78772e3-fe50-4819-950a-d7f3d24ec23f. Do not edit.
+# Written by the resource-sync workflow for Sync 109a0b15-31ef-4222-bfcf-22bb4d360007. Do not edit.
 passwordSecret:
   name: app-env
   key: QA_VK_VALKEY_PASSWORD
