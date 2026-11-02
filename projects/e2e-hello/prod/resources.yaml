@@ -1,4 +1,47 @@
-# Written by the resource-sync workflow for Sync b93ac8f0-c5a6-4330-9922-787714ccab9b. Do not edit.
+# Written by the resource-sync workflow for Sync f47bb01a-eb60-4e94-9ecd-2b437bf32920. Do not edit.
+apiVersion: kro.run/v1alpha1
+kind: RdsPostgres
+metadata:
+  name: db-rds
+  namespace: app-e2e-hello-prod
+  labels:
+    opspresso.com/project: e2e-hello
+    opspresso.com/environment: prod
+    opspresso.com/resource: 5bb1f359-111a-49ca-a70f-1ca94b8b45f9
+spec:
+  dbName: app
+  username: app
+  passwordSecret:
+    name: app-env
+    key: DB_RDS_PGPASSWORD
+  instanceClass: db.t4g.micro
+  storageGiB: 20
+---
+apiVersion: kro.run/v1alpha1
+kind: S3Bucket
+metadata:
+  name: files
+  namespace: app-e2e-hello-prod
+  labels:
+    opspresso.com/project: e2e-hello
+    opspresso.com/environment: prod
+    opspresso.com/resource: 000c2251-0b55-4753-92fb-d04c63b7b7b5
+spec:
+  versioning: false
+---
+apiVersion: kro.run/v1alpha1
+kind: DynamoTable
+metadata:
+  name: table
+  namespace: app-e2e-hello-prod
+  labels:
+    opspresso.com/project: e2e-hello
+    opspresso.com/environment: prod
+    opspresso.com/resource: 3be5f78b-39ba-43b3-8a2d-dccfe08a25f6
+spec:
+  partitionKey: pk
+  sortKey: at
+---
 apiVersion: kro.run/v1alpha1
 kind: DynamoTable
 metadata:
