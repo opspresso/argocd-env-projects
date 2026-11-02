@@ -38,7 +38,9 @@ printf '%s\n' "$documents" | jq -e -s --arg namespace "$namespace" --arg kinds "
       and ((.spec.version // "") | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
       and ((.spec.values | type) == "object")
       and (((.spec.values | keys) - ["passwordSecret", "persistence", "maxMemoryMiB", "peer"]) == []);
-    (map(.metadata.name) | length) == (map(.metadata.name) | unique | length)
+    # One Application per resource ID, so an ID may not repeat.
+    (map(select(.kind == "ChartRelease") | .metadata.labels["opspresso.com/resource"]?) | length) == (map(select(.kind == "ChartRelease") | .metadata.labels["opspresso.com/resource"]?) | unique | length)
+    and (map(.metadata.name) | length) == (map(.metadata.name) | unique | length)
     and all(.[]; type == "object" and named and (instance or release))' >/dev/null \
   || fail "The manifest must hold only uniquely named kro.run objects of kinds [$kinds] or ChartReleases of charts [$charts] in namespace $namespace"
 instances=$(printf '%s\n' "$documents" | jq -c 'select(.kind != "ChartRelease")')

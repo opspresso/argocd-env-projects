@@ -102,7 +102,8 @@ subjects:
     namespace: {{ .Values.submitter.namespace }}
 ---
 # Agent Runway reads the status of the kro instances and chart StatefulSets that resource-sync declares in app-*
-# namespaces and records the resources as ready or failed. Read only: both hold Secret references, never values.
+# namespaces and records the resources as ready or failed. Kubernetes RBAC cannot select app-* namespaces, and a
+# RoleBinding per namespace would need AppProject projects to allow RBAC kinds. So get applies to every StatefulSet.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -113,7 +114,7 @@ rules:
     verbs: [get, list, watch]
   - apiGroups: [apps]
     resources: [statefulsets]
-    verbs: [get, list, watch]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

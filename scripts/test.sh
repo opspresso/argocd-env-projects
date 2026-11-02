@@ -137,7 +137,7 @@ for kind in RoleBinding ClusterRoleBinding; do
   fi
 done
 resource_verbs=$(yq 'select(.kind == "ClusterRole" and .metadata.name == "agent-runway-resources") | .rules[] | (.apiGroups | join(",")) + " " + (.verbs | join(","))' <<<"$delivery" | paste -sd '|' -)
-if [ "$resource_verbs" = "kro.run get,list,watch|apps get,list,watch" ]; then pass "Agent Runway may only read kro instances and StatefulSets"; else fail "Agent Runway may only read kro instances and StatefulSets ($resource_verbs)"; fi
+if [ "$resource_verbs" = "kro.run get,list,watch|apps get" ]; then pass "Agent Runway may only read kro instances and StatefulSets"; else fail "Agent Runway may only read kro instances and StatefulSets ($resource_verbs)"; fi
 refuse "Helm leaves no template of its own" '\{\{ *\.' "$delivery"
 expect "the runner executor has its token Secret" 'name: delivery-runner.service-account-token' "$delivery"
 expect "runner Pods reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$delivery"
@@ -216,6 +216,7 @@ expect "the values file pins the chart version" '^chartVersion: 1.0.0$' "$file"
 expect "the values file names the Application" '^resourceId: 0123abcd0123412381230123456789ab$' "$file"
 expect "the values file keeps the chart values" 'storageGiB: 5' "$file"
 if grep -q ChartRelease "$declared/resources.yaml"; then fail "resources.yaml holds no ChartRelease"; else pass "resources.yaml holds no ChartRelease"; fi
+fails "a repeated resource ID is refused" "ChartReleases of charts" check <<<"$(printf '%s\n---\n%s' "$release" "${release/name: db/name: db2}")"
 fails "a chart outside the list is refused" "ChartReleases of charts" check <<<"${release/chart: postgres/chart: app}"
 fails "the name app is refused" "ChartReleases of charts" check <<<"${release/name: db/name: app}"
 fails "an image override is refused" "ChartReleases of charts" check <<<"${release/storageGiB: 5\}/storageGiB: 5\}
