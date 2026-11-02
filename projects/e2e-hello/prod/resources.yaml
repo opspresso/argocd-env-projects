@@ -1,4 +1,16 @@
-# Written by the resource-sync workflow for Sync ddab6651-bf99-4829-a33c-4a803585aeda. Do not edit.
+# Written by the resource-sync workflow for Sync 8fa83f52-f84f-445d-a829-12ea925cfc55. Do not edit.
+apiVersion: kro.run/v1alpha1
+kind: DynamoTable
+metadata:
+  name: verify-dynamo-1102
+  namespace: app-e2e-hello-prod
+  labels:
+    opspresso.com/project: e2e-hello
+    opspresso.com/environment: prod
+    opspresso.com/resource: 7b8a20fe-a2c1-4173-aa04-972cd0c6db4a
+spec:
+  partitionKey: id
+---
 apiVersion: kro.run/v1alpha1
 kind: RdsPostgres
 metadata:
@@ -16,3 +28,15 @@ spec:
     key: VERIFY_RDS_1102_PGPASSWORD
   instanceClass: db.t4g.micro
   storageGiB: 20
+---
+apiVersion: kro.run/v1alpha1
+kind: S3Bucket
+metadata:
+  name: verify-s3-1102
+  namespace: app-e2e-hello-prod
+  labels:
+    opspresso.com/project: e2e-hello
+    opspresso.com/environment: prod
+    opspresso.com/resource: db1efd4d-4992-4809-9f7d-8bdba1ba3593
+spec:
+  versioning: false
