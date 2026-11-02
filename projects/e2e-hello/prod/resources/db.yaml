@@ -1,4 +1,4 @@
-# Written by the resource-sync workflow for Sync 0edc630b-37f3-4b06-8ad3-f01727f4d6bd. Do not edit.
+# Written by the resource-sync workflow for Sync bd063b63-9465-4d6a-9ac7-484ff2b7d017. Do not edit.
 passwordSecret:
   name: app-env
   key: DB_PGPASSWORD
