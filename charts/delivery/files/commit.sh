@@ -26,12 +26,13 @@ commit() {
   git commit -q -m "$SUBJECT" -m "$BODY"
 }
 if ! commit; then echo "$TARGET already has this content"; exit 0; fi
-# Other Workflows commit to the same branch: only a rejected (non-fast-forward) push is retried on top of theirs.
+# Other Workflows commit to the same branch: only a push that lost that race is retried on top of theirs. GitHub reports
+# a race either as a non-fast-forward rejection or, when both pushes arrive together, as "cannot lock ref".
 # Any other failure, such as a refused key, ends the step with Git's own message.
 attempt=1
 until git push -q origin "HEAD:${GITOPS_BRANCH}" 2>/tmp/push.err; do
   cat /tmp/push.err
-  grep -qE "\[rejected\]|non-fast-forward|fetch first" /tmp/push.err || exit 1
+  grep -qE "\[rejected\]|non-fast-forward|fetch first|cannot lock ref" /tmp/push.err || exit 1
   if [ "$attempt" -ge 5 ]; then echo "Could not push after $attempt attempts"; exit 1; fi
   attempt=$((attempt + 1))
   sleep $((attempt * 2))

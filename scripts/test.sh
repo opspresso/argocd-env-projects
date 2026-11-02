@@ -222,6 +222,7 @@ fails "the name app is refused" "ChartReleases of charts" check <<<"${release/na
 fails "an image override is refused" "ChartReleases of charts" check <<<"${release/storageGiB: 5\}/storageGiB: 5\}
     image: \{repository: evil\}}"
 fails "a chart version without a fixed number is refused" "ChartReleases of charts" check <<<"${release/version: 1.0.0/version: latest}"
+expect "a push that loses the GitHub ref lock is retried" 'cannot lock ref' "$(grep -E 'grep -qE' charts/delivery/files/commit.sh)"
 fails "an empty manifest is refused" "manifest is empty" check </dev/null
 fails "a manifest of empty documents is refused" "no document" check <<<"$(printf -- '---\n# none\n')"
 # Agent Runway's zero-resource manifest, decoded the way the write step decodes the parameter.
