@@ -1,0 +1,16 @@
+# Written by the resource-sync workflow for Sync 2bf099e8-6a32-4afd-a20c-7df3039c06ee. Do not edit.
+passwordSecret:
+  name: app-env
+  key: VERIFY_VALKEY_1102_VALKEY_PASSWORD
+persistence:
+  storageGiB: 1
+maxMemoryMiB: 128
+peer:
+  enabled: true
+  namespace: agent-forge-workspaces
+  podLabels:
+    app.kubernetes.io/name: agent-forge-sandbox
+chart: valkey
+chartVersion: 1.0.0
+resourceName: verify-valkey-1102
+resourceId: 2f3dd9a65d8248b681dc684eaeea4dbe
