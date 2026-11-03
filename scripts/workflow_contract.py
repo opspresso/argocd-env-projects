@@ -4,7 +4,7 @@ Lines: "<template> tasks|parameters|outputs <names>" and "all deploy-key <templa
 """
 import yaml
 
-ENTRYPOINTS = {"app-build": "release", "app-deploy": "deployment", "resource-sync": "sync"}
+ENTRYPOINTS = {"app-build": "release", "app-deploy": "deployment", "app-remove": "removal", "resource-sync": "sync"}
 
 
 def load(name):
@@ -21,7 +21,7 @@ for name, entry in ENTRYPOINTS.items():
     # Agent Runway reads results and logs: Workflows stay 1 day. The build and deploy steps keep every Pod as long,
     # so deployment_logs can return a successful step's output too; resource-sync output is not read.
     assert spec["ttlStrategy"] == {"secondsAfterSuccess": 86400, "secondsAfterFailure": 86400}, name
-    if name in ("app-build", "app-deploy"):
+    if name in ("app-build", "app-deploy", "app-remove"):
         # Explicit, because the controller's workflowDefaults (OnPodSuccess) apply when podGC is absent.
         assert spec["podGC"] == {"strategy": "OnWorkflowCompletion", "deleteDelayDuration": "24h"}, name
     else:

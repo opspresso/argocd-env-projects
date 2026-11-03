@@ -121,7 +121,7 @@ done
 delivery=$(helm template delivery charts/delivery --namespace app-delivery \
   --set registry=123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects --set pushRoleArn=arn:aws:iam::123456789012:role/app-delivery-push \
   --set 'apiServer.cidrs={172.20.0.1/32,10.10.114.40/32}')
-for name in app-build app-deploy resource-sync; do
+for name in app-build app-deploy app-remove resource-sync; do
   expect "delivery renders WorkflowTemplate $name" "^  name: ${name}$" "$delivery"
 done
 secret_verbs=$(yq 'select(.kind == "Role" and .metadata.name == "agent-runway") | .rules[] | select(.resources[] == "secrets") | .verbs | join(",")' <<<"$delivery")
@@ -158,13 +158,17 @@ expect "app-build returns revision and image" '^image revision$' "$(line app-bui
 expect "app-deploy keeps the step names Agent Runway maps" '^deploy verify$' "$(line app-deploy tasks)"
 expect "app-deploy takes Agent Runway's parameters" '^deployment project environment image application host$' "$(line app-deploy parameters)"
 expect "app-deploy returns url" '^url$' "$(line app-deploy outputs)"
+expect "app-remove keeps the step names Agent Runway maps" '^remove verify$' "$(line app-remove tasks)"
+expect "app-remove takes Agent Runway's parameters" '^deployment project environment$' "$(line app-remove parameters)"
+expect "app-remove returns nothing" '^$' "$(line app-remove outputs)"
+expect "a removal waits for a deployment of the same environment" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line app-remove mutexes)"
 expect "resource-sync has one write step" '^write$' "$(line resource-sync tasks)"
 expect "resource-sync takes Agent Runway's parameters" '^sync project environment manifest$' "$(line resource-sync parameters)"
 expect "resource-sync returns nothing" '^$' "$(line resource-sync outputs)"
 expect "one resource sync runs per environment" '^resources-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line resource-sync mutexes)"
 expect "one deployment runs per environment" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line app-deploy mutexes)"
 expect "builds are not serialized" '^$' "$(line app-build mutexes)"
-expect "only deploy and write hold the deploy key, as delivery-git" '^app-deploy:deploy:delivery-git resource-sync:write:delivery-git$' "$(line all deploy-key)"
+expect "only deploy, remove and write hold the deploy key, as delivery-git" '^app-deploy:deploy:delivery-git app-remove:remove:delivery-git resource-sync:write:delivery-git$' "$(line all deploy-key)"
 expect "a changed declaration exits 3 for Agent Runway" 'exit 3' "$(cat charts/delivery/files/app-build.yaml)"
 expect "deploy refuses an image of another Project" 'is not an image of \$\{REGISTRY\}/\$\{PROJECT\} pinned by digest' "$(cat charts/delivery/files/app-deploy.yaml)"
 
@@ -224,6 +228,21 @@ fails "an image override is refused" "ChartReleases of charts" check <<<"${relea
     image: \{repository: evil\}}"
 fails "a chart version without a fixed number is refused" "ChartReleases of charts" check <<<"${release/version: 1.0.0/version: latest}"
 expect "a push that loses the GitHub ref lock is retried" 'cannot lock ref' "$(grep -E 'grep -qE' charts/delivery/files/commit.sh)"
+# commit.sh's commit(): an empty SOURCE removes TARGET, and an environment directory without app.yaml and resources goes.
+gitops=$(mktemp -d)
+commit_fn=$(sed -n '/^commit() {/,/^}/p' charts/delivery/files/commit.sh)
+gitops_commit() { (cd "$gitops" && SOURCE=$1 TARGET=$2 SUBJECT=test BODY=test bash -c "$commit_fn"$'\n'"commit" >/dev/null 2>&1); }
+git -C "$gitops" init -q && git -C "$gitops" config user.email t@t && git -C "$gitops" config user.name t
+mkdir -p "$gitops/projects/todo/dev/resources" && echo app > "$gitops/projects/todo/dev/app.yaml"
+echo r > "$gitops/projects/todo/dev/resources/main.yaml" && echo h > "$gitops/projects/todo/dev/resources.yaml"
+git -C "$gitops" add -A && git -C "$gitops" commit -qm init
+gitops_commit "" projects/todo/dev/app.yaml
+if [ ! -e "$gitops/projects/todo/dev/app.yaml" ] && [ -f "$gitops/projects/todo/dev/resources/main.yaml" ]; then pass "a removal keeps the resources"; else fail "a removal keeps the resources"; fi
+empty=$(mktemp -d) && echo h > "$empty/resources.yaml"
+gitops_commit "$empty" projects/todo/dev
+if [ ! -e "$gitops/projects/todo/dev" ] && [ -z "$(git -C "$gitops" status --porcelain)" ]; then pass "an environment without app and resources is removed and committed"; else fail "an environment without app and resources is removed and committed"; fi
+if gitops_commit "" projects/todo/dev/app.yaml; then fail "a repeated removal reports no change"; else pass "a repeated removal reports no change"; fi
+rm -rf "$gitops" "$empty"
 fails "an empty manifest is refused" "manifest is empty" check </dev/null
 fails "a manifest of empty documents is refused" "no document" check <<<"$(printf -- '---\n# none\n')"
 # Agent Runway's zero-resource manifest, decoded the way the write step decodes the parameter.
@@ -247,7 +266,7 @@ fails "a duplicate name is refused" "uniquely named" check <<<"$(printf '%s\n---
 fails "a manifest that is not YAML is refused" "" check <<<"kind: [unclosed"
 
 if command -v argo >/dev/null; then
-  for name in app-build app-deploy resource-sync; do
+  for name in app-build app-deploy app-remove resource-sync; do
     if argo lint --offline "charts/delivery/files/$name.yaml" >/dev/null; then pass "argo lint accepts $name"; else fail "argo lint accepts $name"; fi
   done
 else

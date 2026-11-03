@@ -7,7 +7,8 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
 
 ## Ownership
 
-- `projects/<slug>/<env>/app.yaml` is written only by the `deploy` step of the `app-deploy` workflow, and
+- `projects/<slug>/<env>/app.yaml` is written only by the `deploy` step of the `app-deploy` workflow and removed only by
+  the `remove` step of the `app-remove` workflow, and
   `projects/<slug>/<env>/resources.yaml` and `projects/<slug>/<env>/resources/<name>.yaml` only by the `write` step of the `resource-sync` workflow. Never edit, add or
   rename these files by hand; change the app's `application.yaml` or its resources in Agent Runway instead.
 - `charts/app` and `charts/delivery` change through reviewed pull requests.
@@ -26,22 +27,25 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   template refuses an environment outside the list, any other namespace or host, and a workload image without a
   digest. The guard is defense in depth: a values file could set `app.raw` and turn it off. The boundary is that only
   the `deploy` step writes `app.yaml`, through the fixed `render.jq` mapping, with a deploy key that only the
-  `delivery-git` steps (`deploy`, `write`) hold. Keep both, and never let other content reach the values files.
+  `delivery-git` steps (`deploy`, `remove`, `write`) hold. Keep both, and never let other content reach the values files.
 - `app.tenant.environments` is a space-separated string, not a list: a values file could add items to a list
   parameter.
+- `commit.sh` removes an environment directory that has no `app.yaml` and no resource, so the ApplicationSet deletes
+  its Application and Argo CD prunes the tenant objects. A Project leaves this repository when all its services and
+  resources are removed.
 - Without `app.yaml` the chart renders only the tenant objects (no Deployment, Service or HTTPRoute), so
   `resources.yaml` can use Secret `app-env` before the first deployment. `render.jq` turns the workload on.
 - `charts/delivery/files/render.jq` is the only mapping from Agent Runway's declaration to `app` chart values; the deploy step
   and `scripts/test.sh` both use it.
 - The app chart renders only the kinds that AppProject `projects` allows. Adding a kind needs a change there too.
-- `charts/delivery/files/{app-build,app-deploy,resource-sync}.yaml` are static. Argo's `{{...}}` parameters must not
+- `charts/delivery/files/{app-build,app-deploy,app-remove,resource-sync}.yaml` are static. Argo's `{{...}}` parameters must not
   pass through Helm; cluster values reach the steps through ConfigMap `delivery-settings`, and the shared scripts
   (`render.jq`, `check-resources.sh`, `commit.sh`) through ConfigMap `delivery-scripts`.
 - Keep the WorkflowTemplate names, parameters, results and DAG task names of the Workflow contract in
   `docs/DELIVERY_V2.md` (`app-build`: `checkout`, `check-application`, `test`, `registry`, `build`; `app-deploy`:
-  `deploy`, `verify`; `resource-sync`: `write`). Agent Runway submits them and maps failed tasks to its steps.
-- `resource-sync` and `app-deploy` hold a per-environment mutex (`resources-<project>-<environment>`,
-  `deploy-<project>-<environment>`). Argo Workflows v4 accepts only `synchronization.mutexes`.
+  `deploy`, `verify`; `app-remove`: `remove`, `verify`; `resource-sync`: `write`). Agent Runway submits them and maps failed tasks to its steps.
+- `resource-sync` holds the mutex `resources-<project>-<environment>`; `app-deploy` and `app-remove` share
+  `deploy-<project>-<environment>`. Argo Workflows v4 accepts only `synchronization.mutexes`.
 - `resource-sync` writes only kro instances of the kinds in `resourceKinds` and ChartReleases of the charts in
   `resourceCharts` (charts/delivery values) in the environment's namespace. A ChartRelease may set only
   `passwordSecret`, `persistence`, `maxMemoryMiB` and `peer`. AppProject `projects` must allow the same kinds and the
