@@ -1,8 +1,10 @@
 # Commits to the GitOps repository with the deploy key, which can write to that repository only.
 # Inputs (environment): SOURCE and TARGET, SUBJECT and BODY (commit message),
 # and GITOPS_REPOSITORY, GITOPS_BRANCH, GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL from ConfigMap delivery-settings.
-# A file SOURCE replaces the file TARGET. A directory SOURCE is the whole resource declaration of the environment
-# directory TARGET: it replaces resources.yaml and resources/, and nothing else there.
+# A file SOURCE replaces the file TARGET, and an empty SOURCE removes it. A directory SOURCE is the whole resource
+# declaration of the environment directory TARGET: it replaces resources.yaml and resources/, and nothing else there.
+# An environment directory with no app.yaml and no resource is removed, so the projects ApplicationSet deletes its
+# Application and Argo CD prunes what it held.
 set -eu
 # ssh refuses a group-readable key, and the Secret volume is group-readable for fsGroup.
 install -m 0600 /var/run/delivery/deploy-key/key "$HOME/key"
@@ -13,15 +15,24 @@ git clone -q --depth 20 --branch "$GITOPS_BRANCH" "git@github.com:${GITOPS_REPOS
 cd /tmp/gitops
 # Returns 1 when the target already has this content, so a resubmitted Workflow succeeds without a new commit.
 commit() {
-  if [ -d "$SOURCE" ]; then
+  if [ -z "$SOURCE" ]; then
+    directory=$(dirname "$TARGET")
+    rm -f "$TARGET"
+  elif [ -d "$SOURCE" ]; then
+    directory=$TARGET
     mkdir -p "$TARGET"
     rm -rf "$TARGET/resources.yaml" "$TARGET/resources"
     cp -R "$SOURCE/." "$TARGET/"
   else
-    mkdir -p "$(dirname "$TARGET")"
+    directory=$(dirname "$TARGET")
+    mkdir -p "$directory"
     cp "$SOURCE" "$TARGET"
   fi
-  git add -A "$TARGET"
+  if [ ! -f "$directory/app.yaml" ] && [ -z "$(ls -A "$directory/resources" 2>/dev/null)" ]; then
+    rm -rf "$directory"
+  fi
+  # The whole fresh clone: a directory that is already gone is not a pathspec git add accepts.
+  git add -A
   git diff --cached --quiet && return 1
   git commit -q -m "$SUBJECT" -m "$BODY"
 }

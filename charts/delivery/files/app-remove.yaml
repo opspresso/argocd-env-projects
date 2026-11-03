@@ -1,0 +1,128 @@
+# One removal: stop the service of one Project environment (agent-platform docs/APP_DELIVERY.md). Agent Runway is the
+# only submitter and names the Workflow deploy-<Deployment ID>, like a deployment. The resources of the environment
+# stay; commit.sh removes the environment directory when no app.yaml and no resource remain there.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: app-remove
+spec:
+  entrypoint: removal
+  # The mutex of app-deploy: a removal and a deployment of one environment never commit app.yaml in turn.
+  synchronization:
+    mutexes:
+      - name: "deploy-{{workflow.parameters.project}}-{{workflow.parameters.environment}}"
+  serviceAccountName: delivery-runner
+  activeDeadlineSeconds: 1800
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 86400
+  podGC:
+    strategy: OnWorkflowCompletion
+    deleteDelayDuration: 24h
+  securityContext:
+    fsGroup: 1000
+  arguments:
+    parameters:
+      - name: deployment
+      - name: project
+      - name: environment
+  templates:
+    - name: removal
+      dag:
+        tasks:
+          - name: remove
+            template: remove
+          - name: verify
+            template: verify
+            depends: remove
+
+    # Removes projects/<project>/<environment>/app.yaml. Without it the chart renders no workload, and Argo CD prunes it.
+    - name: remove
+      serviceAccountName: delivery-git
+      activeDeadlineSeconds: 300
+      initContainers:
+        - name: check
+          image: alpine/k8s:1.37.1
+          command: [sh, -euc]
+          args:
+            - |
+              # The parameters name a path in the GitOps repository: refuse anything else.
+              printf '%s' "$PROJECT" | grep -qE '^[a-z][a-z0-9-]{1,30}[a-z0-9]$' || { echo "Invalid project $PROJECT"; exit 1; }
+              printf '%s' "$ENVIRONMENT" | grep -qE '^[a-z][a-z0-9]{1,11}$' || { echo "Invalid environment $ENVIRONMENT"; exit 1; }
+          env:
+            - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+            - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
+          securityContext: &unprivileged
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources: &small
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 512Mi}
+      container:
+        image: alpine/git:v2.54.0
+        command: [sh, /etc/delivery-scripts/commit.sh]
+        env:
+          # An empty SOURCE removes TARGET.
+          - {name: SOURCE, value: ""}
+          - {name: TARGET, value: "projects/{{workflow.parameters.project}}/{{workflow.parameters.environment}}/app.yaml"}
+          - {name: SUBJECT, value: "Remove {{workflow.parameters.project}} {{workflow.parameters.environment}}"}
+          - {name: BODY, value: "Deployment {{workflow.parameters.deployment}}"}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        # ssh needs a passwd entry for its user, and the image has one only for root. No capability is kept.
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources: *small
+        volumeMounts:
+          - {name: scripts, mountPath: /etc/delivery-scripts, readOnly: true}
+          - {name: deploy-key, mountPath: /var/run/delivery/deploy-key, readOnly: true}
+          - {name: known-hosts, mountPath: /etc/delivery, readOnly: true}
+      volumes:
+        - name: deploy-key
+          secret:
+            secretName: gitops-deploy-key
+            defaultMode: 0440
+        - name: known-hosts
+          configMap:
+            name: delivery-known-hosts
+        - name: scripts
+          configMap:
+            name: delivery-scripts
+
+    # Waits until Argo CD pruned the workload: no Deployment app in the environment's namespace.
+    - name: verify
+      serviceAccountName: delivery-verify
+      activeDeadlineSeconds: 900
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            namespace="app-${PROJECT}-${ENVIRONMENT}"
+            echo "Waiting for Deployment app in $namespace to be removed"
+            deadline=$(( $(date +%s) + 600 ))
+            # kubectl prints nothing for a missing object with --ignore-not-found; any other error stops the step.
+            while [ -n "$(kubectl get deployment app -n "$namespace" --ignore-not-found -o name)" ]; do
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                echo "Deployment app is still in $namespace after 10 minutes."
+                kubectl get pods -n "$namespace" -o wide || true
+                exit 1
+              fi
+              sleep 10
+            done
+            echo "Deployment app is removed from $namespace"
+        env:
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
+          - {name: HOME, value: /tmp}
+        securityContext: *unprivileged
+        resources: *small
