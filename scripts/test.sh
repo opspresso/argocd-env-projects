@@ -23,7 +23,9 @@ app() {
     --set "app.tenant.environments=${ENVIRONMENTS}" --set "app.tenant.primaryEnvironment=${PRIMARY}" \
     --set app.tenant.domain=apps.rovr.dev --set app.tenant.cluster=eks-demo \
     --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::123456789012:role/agent-runway-tenant-secrets \
-    --set "app.routing.hosts[0]=${host}" "$@"
+    --set "app.routing.hosts[0]=${host}" \
+    --set "app.namespace.labels.opspresso\.com/delivery-project=${project}" \
+    --set "app.namespace.labels.opspresso\.com/delivery-env=${environment}" "$@"
 }
 # Runs a command with another environment profile: profile <environments> <primary> <command...>.
 profile() { local ENVIRONMENTS=$1 PRIMARY=$2; shift 2; "$@"; }
@@ -61,6 +63,9 @@ expect "ExternalSecret reads this environment" "path: '?/agent-runway/eks-demo/t
 expect "app-env is deleted when the environment has no Variables" "deletionPolicy: Delete$" "$dev"
 expect "apps reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$dev"
 expect "egress excludes instance metadata" '- 169\.254\.0\.0/16' "$dev"
+expect "the environment owns its namespace, so Argo CD deletes it with the Application" 'kind: Namespace$' "$dev"
+expect "the namespace carries the tenant labels the secret store policy checks" 'opspresso.com/delivery-project: "?todo"?$' "$dev"
+expect "the namespace is restricted to the baseline Pod security level" 'pod-security.kubernetes.io/enforce: "?baseline"?$' "$dev"
 expect "the environment has a ResourceQuota" 'kind: ResourceQuota' "$dev"
 expect "the ResourceQuota allows two RdsPostgres instances" 'count/rdspostgres.kro.run: "2"' "$dev"
 expect "the ResourceQuota allows two S3Bucket instances" 'count/s3buckets.kro.run: "2"' "$dev"
@@ -86,6 +91,8 @@ fails "a release outside app-<slug>-<env> is refused" "release namespace" \
   --set 'app.tenant.environments=dev prod' --set app.tenant.primaryEnvironment=prod \
   --set app.tenant.domain=apps.rovr.dev --set app.tenant.cluster=eks-demo --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::1:role/r --set 'app.routing.hosts[0]=todo-dev.apps.rovr.dev'
 fails "another host is refused" "routing.hosts must be exactly" app todo dev tests/app/dev.yaml --set 'app.routing.hosts[0]=studio.agrt.dev'
+fails "a namespace labelled for another Project is refused" "namespace must be created with the tenant labels" app todo dev tests/app/dev.yaml --set 'app.namespace.labels.opspresso\.com/delivery-project=other'
+fails "an environment that does not own its namespace is refused" "namespace must be created with the tenant labels" app todo dev tests/app/dev.yaml --set app.namespace.create=false
 fails "a non-primary environment cannot claim <slug>.<domain>" "routing.hosts must be exactly" app todo dev tests/app/dev.yaml --set 'app.routing.hosts[0]=todo.apps.rovr.dev'
 fails "an unknown environment is refused" "is not one of tenant.environments" app todo staging tests/app/dev.yaml
 # tests/app/override.yaml lists staging and makes it primary; the ApplicationSet parameters replace both.

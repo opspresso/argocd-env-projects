@@ -19,13 +19,14 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
 ## Invariants
 
 - `charts/app` wraps the opspresso `app` chart (helm-charts), like argocd-env-apps sample-node and the agent-* services.
-  Keep it free of its own templates. Declare tenant objects with `app` chart settings (`externalSecrets`,
-  `networkPolicy`, `resourceQuota`). Only the guard, which has no `app` chart setting, lives in `app.raw.parentTemplates`.
+  Keep it free of its own templates. Declare tenant objects with `app` chart settings (`namespace`, `externalSecrets`,
+  `networkPolicy`, `resourceQuota`). The environment namespace is one of them, so Argo CD deletes it with the
+  Application; the ApplicationSet must not use `CreateNamespace`, whose namespaces Argo CD never deletes. Only the guard, which has no `app` chart setting, lives in `app.raw.parentTemplates`.
 - The ApplicationSet creates one Application per `projects/<slug>/<env>` directory of an allowed environment. It sets
   `app.tenant.*` (project, environment, environments, primaryEnvironment, domain, cluster, region,
-  tenantSecretsRoleArn) and `app.routing.hosts` as Helm parameters from the directory path and the cluster. The guard
-  template refuses an environment outside the list, any other namespace or host, and a workload image without a
-  digest. The guard is defense in depth: a values file could set `app.raw` and turn it off. The boundary is that only
+  tenantSecretsRoleArn), `app.routing.hosts` and the project and environment labels of `app.namespace` as Helm
+  parameters from the directory path and the cluster. The guard template refuses an environment outside the list, any
+  other namespace or host, a namespace without its tenant labels, and a workload image without a digest. The guard is defense in depth: a values file could set `app.raw` and turn it off. The boundary is that only
   the `deploy` step writes `app.yaml`, through the fixed `render.jq` mapping, with a deploy key that only the
   `delivery-git` steps (`deploy`, `remove`, `write`) hold. Keep both, and never let other content reach the values files.
 - `app.tenant.environments` is a space-separated string, not a list: a values file could add items to a list
