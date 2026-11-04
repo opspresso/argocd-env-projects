@@ -1,0 +1,50 @@
+# Written by the app-deploy workflow for Deployment 343f676a-e720-478e-ad57-a00e49ff1fa4. Do not edit.
+deployment: 343f676a-e720-478e-ad57-a00e49ff1fa4
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-node-4@sha256:e5c67ed8e5def2f1ccb2308ed8d64dfb8ad11b4028852fd36aae652c2b878539
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 3000
+  routing:
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "3000"
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: 343f676a-e720-478e-ad57-a00e49ff1fa4
+  podAnnotations:
+    opspresso.com/deployment: 343f676a-e720-478e-ad57-a00e49ff1fa4
