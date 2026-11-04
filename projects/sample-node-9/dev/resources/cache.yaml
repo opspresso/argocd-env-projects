@@ -1,0 +1,16 @@
+# Written by the resource-sync workflow for Sync 74a22384-1886-449d-a43b-ab1b5aa6d745. Do not edit.
+passwordSecret:
+  name: app-env
+  key: CACHE_VALKEY_PASSWORD
+persistence:
+  storageGiB: 1
+maxMemoryMiB: 128
+peer:
+  enabled: true
+  namespace: agent-forge-workspaces
+  podLabels:
+    app.kubernetes.io/name: agent-forge-sandbox
+chart: valkey
+chartVersion: 1.1.0
+resourceName: cache
+resourceId: f24a6e3cea0748b398c20c9865c75c10
