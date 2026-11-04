@@ -1,0 +1,11 @@
+# Written by the resource-sync workflow for Sync d18edae0-ac57-48e5-b0fa-62aa5796c429. Do not edit.
+passwordSecret:
+  name: app-env
+  key: CACHE_VALKEY_PASSWORD
+persistence:
+  storageGiB: 1
+maxMemoryMiB: 128
+chart: valkey
+chartVersion: 1.1.0
+resourceName: cache
+resourceId: 11faa57558184075b99c3047b4370fba
