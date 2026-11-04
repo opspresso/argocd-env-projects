@@ -13,6 +13,17 @@ app:
   controller:
     enabled: false
 
+  # The environment namespace is an object of this Application, so Argo CD deletes it, and everything in it, when the
+  # ApplicationSet deletes the Application (the Project or the environment is removed). A namespace from the Argo CD
+  # CreateNamespace sync option would stay behind. The ApplicationSet sets the project and environment labels from
+  # the directory path, and the guard checks them; the delivery-tenant-secret-stores admission policy accepts the
+  # SecretStore only in a namespace with these labels.
+  namespace:
+    create: true
+    labels:
+      pod-security.kubernetes.io/enforce: baseline
+      opspresso.com/delivery-tenant: "true"
+
   # Pod Identity for bucket resources mounts its own token; the app needs no Kubernetes API token.
   serviceAccount:
     create: true
@@ -163,6 +174,8 @@ app:
         {{- if not (has $t.primaryEnvironment $envs) }}{{ fail (printf "tenant.primaryEnvironment %q is not one of tenant.environments %v" $t.primaryEnvironment $envs) }}{{ end }}
         {{- range $envs }}{{ if hasSuffix (printf "-%s" .) $t.project }}{{ fail (printf "tenant.project %q must not end with -%s: its host would collide with another environment" $t.project .) }}{{ end }}{{ end }}
         {{- if ne .Release.Namespace (printf "app-%s-%s" $t.project $t.environment) }}{{ fail (printf "release namespace %q must be app-%s-%s" .Release.Namespace $t.project $t.environment) }}{{ end }}
+        {{- $labels := .Values.namespace.labels | default dict }}
+        {{- if or (not .Values.namespace.create) (ne (toString (index $labels "opspresso.com/delivery-tenant")) "true") (ne (toString (index $labels "opspresso.com/delivery-project")) $t.project) (ne (toString (index $labels "opspresso.com/delivery-env")) $t.environment) (ne (toString (index $labels "pod-security.kubernetes.io/enforce")) "baseline") }}{{ fail (printf "namespace must be created with the tenant labels of app-%s-%s" $t.project $t.environment) }}{{ end }}
         {{- $host := ternary (printf "%s.%s" $t.project $t.domain) (printf "%s-%s.%s" $t.project $t.environment $t.domain) (eq $t.environment $t.primaryEnvironment) }}
         {{- if or (not $t.domain) (ne (toJson .Values.routing.hosts) (toJson (list $host))) }}{{ fail (printf "routing.hosts must be exactly [%s]" $host) }}{{ end }}
         {{- if and .Values.controller.enabled (not (regexMatch "@sha256:[a-f0-9]{64}$" (.Values.image.reference | default ""))) }}{{ fail "image.reference must pin the image by digest" }}{{ end }}
