@@ -1,0 +1,57 @@
+# Written by the app-deploy workflow for Deployment a64a8fd8-b324-4817-aaea-54c435b97382. Do not edit.
+deployment: a64a8fd8-b324-4817-aaea-54c435b97382
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-hello@sha256:dc62aa4e11507401086f175efd2f183fc0dce19301d7e6234d502895955464f6
+  replicaCount: 2
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: true
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: a64a8fd8-b324-4817-aaea-54c435b97382
+  podAnnotations:
+    opspresso.com/deployment: a64a8fd8-b324-4817-aaea-54c435b97382
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: app
