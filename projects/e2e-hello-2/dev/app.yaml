@@ -1,0 +1,52 @@
+# Written by the app-deploy workflow for Deployment fc97b3c7-648f-41a6-84d8-9515053270b8. Do not edit.
+deployment: fc97b3c7-648f-41a6-84d8-9515053270b8
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/e2e-hello-2@sha256:4cb63dcc71ac8be3a78e3284a8f4769785f019c5e0eeb66c1de23e99b6ee401f
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+    - name: LOG_LEVEL
+      value: info
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: fc97b3c7-648f-41a6-84d8-9515053270b8
+  podAnnotations:
+    opspresso.com/deployment: fc97b3c7-648f-41a6-84d8-9515053270b8
