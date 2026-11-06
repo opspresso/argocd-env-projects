@@ -1,0 +1,11 @@
+# Written by the resource-sync workflow for Sync 58cc29f4-2928-4a7c-bf6b-f43bee3a6484. Do not edit.
+passwordSecret:
+  name: app-env
+  key: VALKEY_PASSWORD
+persistence:
+  storageGiB: 1
+maxMemoryMiB: 128
+chart: valkey
+chartVersion: 1.1.0
+resourceName: todo-valkey
+resourceId: d9231aaa16174e42bca36860cb0c5e55
