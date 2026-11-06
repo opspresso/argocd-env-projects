@@ -1,6 +1,7 @@
 # One removal: stop the service of one Project environment (agent-platform docs/APP_DELIVERY.md). Agent Runway is the
 # only submitter and names the Workflow deploy-<Deployment ID>, like a deployment. The resources of the environment
-# stay; cleanup removes the environment directory after verify when no app.yaml and no resource remain there.
+# stay; cleanup removes the environment directory after verify when no app.yaml and no resource remain there and no
+# resource object is left in the namespace. Otherwise the directory stays, and the next sync or removal tries again.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
@@ -35,9 +36,16 @@ spec:
           - name: verify
             template: verify
             depends: remove
+          - name: live
+            template: live
+            depends: verify
+            arguments:
+              parameters:
+                - {name: empty, value: "true"}
           - name: cleanup
             template: cleanup
-            depends: verify
+            depends: live
+            when: "{{tasks.live.outputs.parameters.live}} == false"
 
     # Removes projects/<project>/<environment>/app.yaml. Without it the chart renders no workload, and Argo CD prunes it.
     - name: remove
@@ -127,6 +135,54 @@ spec:
           - {name: PROJECT, value: "{{workflow.parameters.project}}"}
           - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
           - {name: HOME, value: /tmp}
+        securityContext: *unprivileged
+        resources: *small
+
+
+    # Reports whether the environment still holds live objects that a resource declaration created, in any state
+    # (also while deleting, for example an S3Bucket kept by BucketNotEmpty): kro instances of RESOURCE_KINDS and the
+    # StatefulSets and PVCs of ChartReleases. Never fails for that: such objects are a normal state, and cleanup then
+    # keeps the directory so the Application and the cause stay visible. A later sync or removal tries again.
+    - name: live
+      serviceAccountName: delivery-verify
+      activeDeadlineSeconds: 120
+      inputs:
+        parameters:
+          - name: empty
+      outputs:
+        parameters:
+          - name: live
+            valueFrom:
+              path: /tmp/live
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            namespace="app-${PROJECT}-${ENVIRONMENT}"
+            if [ "$EMPTY" != true ]; then
+              echo "The environment still declares resources"
+              echo true > /tmp/live
+              exit 0
+            fi
+            kinds=$(printf '%s' "$RESOURCE_KINDS" | tr 'A-Z ' 'a-z,')
+            # A failed kubectl stops the step (set -e): an unreadable namespace is not an empty one.
+            objects=$(kubectl get "${kinds},statefulsets.apps,persistentvolumeclaims" -n "$namespace" --ignore-not-found -o name)
+            if [ -n "$objects" ]; then
+              printf 'not empty yet: %s still holds\n%s\n' "$namespace" "$objects"
+              echo true > /tmp/live
+            else
+              echo "No resource object is left in $namespace"
+              echo false > /tmp/live
+            fi
+        env:
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
+          - {name: EMPTY, value: "{{inputs.parameters.empty}}"}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
         securityContext: *unprivileged
         resources: *small
 

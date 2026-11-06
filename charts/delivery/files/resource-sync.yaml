@@ -4,8 +4,10 @@
 # Agent Runway reads their status there.
 # Agent Runway is the only submitter and names the Workflow resources-<Sync ID>. It holds no GitOps credential:
 # only this step's deploy key writes. Removing every resource of the environment needs the explicit document
-# {apiVersion: v1, kind: List, items: []}; an empty manifest is refused. After such a sync, prune waits until Argo CD
-# deleted the resources and cleanup removes the environment directory when no app.yaml remains either.
+# {apiVersion: v1, kind: List, items: []}; an empty manifest is refused. After such a sync, cleanup removes the
+# environment directory when no app.yaml remains and no resource object is left in the namespace. Otherwise the
+# directory stays with an empty declaration, and the next sync or removal of the environment tries again. The
+# Workflow result is the result of write: cleanup never fails for objects that are still being deleted.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
@@ -18,8 +20,7 @@ spec:
     mutexes:
       - name: "resources-{{workflow.parameters.project}}-{{workflow.parameters.environment}}"
   serviceAccountName: delivery-runner
-  # write takes seconds; prune waits up to 15 minutes for deleted databases.
-  activeDeadlineSeconds: 1800
+  activeDeadlineSeconds: 600
   ttlStrategy:
     secondsAfterSuccess: 86400
     secondsAfterFailure: 86400
@@ -41,14 +42,16 @@ spec:
         tasks:
           - name: write
             template: write
-          - name: prune
-            template: prune
+          - name: live
+            template: live
             depends: write
-            when: "{{tasks.write.outputs.parameters.empty}} == true"
+            arguments:
+              parameters:
+                - {name: empty, value: "{{tasks.write.outputs.parameters.empty}}"}
           - name: cleanup
             template: cleanup
-            depends: prune
-            when: "{{tasks.write.outputs.parameters.empty}} == true"
+            depends: live
+            when: "{{tasks.live.outputs.parameters.live}} == false"
 
     # The init container checks the manifest: only the instance kinds of the platform's ResourceGraphDefinitions
     # (RESOURCE_KINDS in delivery-settings) and the charts in RESOURCE_CHARTS, in this environment's namespace.
@@ -141,36 +144,47 @@ spec:
           configMap:
             name: delivery-scripts
 
-    # Waits until Argo CD deleted the resources of the environment: no kro instance of RESOURCE_KINDS and no Pod of a
-    # ChartRelease (any release other than the app) in its namespace.
-    - name: prune
+
+    # Reports whether the environment still holds live objects that a resource declaration created, in any state
+    # (also while deleting, for example an S3Bucket kept by BucketNotEmpty): kro instances of RESOURCE_KINDS and the
+    # StatefulSets and PVCs of ChartReleases. Never fails for that: such objects are a normal state, and cleanup then
+    # keeps the directory so the Application and the cause stay visible. A later sync or removal tries again.
+    - name: live
       serviceAccountName: delivery-verify
-      activeDeadlineSeconds: 1000
+      activeDeadlineSeconds: 120
+      inputs:
+        parameters:
+          - name: empty
+      outputs:
+        parameters:
+          - name: live
+            valueFrom:
+              path: /tmp/live
       container:
         image: alpine/k8s:1.37.1
         command: [sh, -euc]
         args:
           - |
             namespace="app-${PROJECT}-${ENVIRONMENT}"
+            if [ "$EMPTY" != true ]; then
+              echo "The environment still declares resources"
+              echo true > /tmp/live
+              exit 0
+            fi
             kinds=$(printf '%s' "$RESOURCE_KINDS" | tr 'A-Z ' 'a-z,')
-            echo "Waiting for the resources in $namespace to be removed"
-            deadline=$(( $(date +%s) + 900 ))
-            while :; do
-              # A failed kubectl stops the step (set -e): an unreadable namespace is not an empty one.
-              instances=$(kubectl get "$kinds" -n "$namespace" --ignore-not-found -o name)
-              pods=$(kubectl get pods -n "$namespace" -o name \
-                -l "app.kubernetes.io/instance,app.kubernetes.io/instance!=app-${PROJECT}-${ENVIRONMENT}")
-              [ -z "$instances$pods" ] && break
-              if [ "$(date +%s)" -ge "$deadline" ]; then
-                printf 'Still in %s after 15 minutes:\n%s\n%s\n' "$namespace" "$instances" "$pods"
-                exit 1
-              fi
-              sleep 15
-            done
-            echo "The resources in $namespace are removed"
+            # A failed kubectl stops the step (set -e): an unreadable namespace is not an empty one.
+            objects=$(kubectl get "${kinds},statefulsets.apps,persistentvolumeclaims" -n "$namespace" --ignore-not-found -o name)
+            if [ -n "$objects" ]; then
+              printf 'not empty yet: %s still holds\n%s\n' "$namespace" "$objects"
+              echo true > /tmp/live
+            else
+              echo "No resource object is left in $namespace"
+              echo false > /tmp/live
+            fi
         env:
           - {name: PROJECT, value: "{{workflow.parameters.project}}"}
           - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
+          - {name: EMPTY, value: "{{inputs.parameters.empty}}"}
           - {name: HOME, value: /tmp}
         envFrom:
           - configMapRef:
