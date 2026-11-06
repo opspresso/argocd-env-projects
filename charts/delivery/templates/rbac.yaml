@@ -42,19 +42,22 @@ subjects:
     namespace: {{ $.Release.Namespace }}
 {{- end }}
 ---
-# verify reads the rollout state of the app it deployed, and resource-sync prune waits until the kro instances are
-# deleted. Read only; Secrets are not included.
+# verify reads the rollout state of the app it deployed, and live lists the objects that resource declarations
+# created (kro instances, chart StatefulSets and PVCs) before cleanup. Read only; Secrets are not included.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: delivery-verify
 rules:
   - apiGroups: [apps]
-    resources: [deployments]
+    resources: [deployments, statefulsets]
     verbs: [get, list]
   - apiGroups: [kro.run]
     resources: [rdspostgres, s3buckets, dynamotables]
     verbs: [get, list]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [list]
   - apiGroups: [""]
     resources: [pods, events]
     verbs: [get, list]

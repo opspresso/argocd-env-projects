@@ -33,8 +33,10 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   parameter.
 - `commit.sh` removes an environment directory in two commits. A content commit never removes the directory: when no
   `app.yaml` and no resource remain, it keeps an empty `resources.yaml`, so Argo CD prunes under a live Application.
-  The `cleanup` step (`PRUNE_EMPTY=1`, after `app-remove` verify and `resource-sync` prune) then removes the directory
-  only if it is still empty, and the ApplicationSet deletes the empty Application. A Project leaves this repository
+  The `cleanup` step (`PRUNE_EMPTY=1`) of `app-remove` and `resource-sync` then removes the directory only if it is
+  still empty and the `live` step found no resource object in the namespace; the ApplicationSet deletes the empty
+  Application. Lingering objects are a normal state: both Workflows succeed, the directory stays, and the next sync or
+  removal of the environment tries again. Workflow results follow `remove`/`verify` and `write`. A Project leaves this repository
   when all its services and resources are removed.
 - Without `app.yaml` the chart renders only the tenant objects (no Deployment, Service or HTTPRoute), so
   `resources.yaml` can use Secret `app-env` before the first deployment. `render.jq` turns the workload on.

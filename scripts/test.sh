@@ -165,11 +165,11 @@ expect "app-build returns revision and image" '^image revision$' "$(line app-bui
 expect "app-deploy keeps the step names Agent Runway maps" '^deploy verify$' "$(line app-deploy tasks)"
 expect "app-deploy takes Agent Runway's parameters" '^deployment project environment image application host$' "$(line app-deploy parameters)"
 expect "app-deploy returns url" '^url$' "$(line app-deploy outputs)"
-expect "app-remove keeps the step names Agent Runway maps, then cleans up" '^remove verify cleanup$' "$(line app-remove tasks)"
+expect "app-remove keeps the step names Agent Runway maps, then cleans up" '^remove verify live cleanup$' "$(line app-remove tasks)"
 expect "app-remove takes Agent Runway's parameters" '^deployment project environment$' "$(line app-remove parameters)"
 expect "app-remove returns nothing" '^$' "$(line app-remove outputs)"
 expect "a removal waits for a deployment of the same environment" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line app-remove mutexes)"
-expect "resource-sync writes, then prunes and cleans up an emptied environment" '^write prune cleanup$' "$(line resource-sync tasks)"
+expect "resource-sync writes, then cleans up an emptied environment" '^write live cleanup$' "$(line resource-sync tasks)"
 expect "resource-sync takes Agent Runway's parameters" '^sync project environment manifest$' "$(line resource-sync parameters)"
 expect "resource-sync returns nothing" '^$' "$(line resource-sync outputs)"
 expect "one resource sync runs per environment" '^resources-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line resource-sync mutexes)"
@@ -268,6 +268,23 @@ if ! gitops_prune projects/solo/dev && [ -n "$(tracked projects/solo/dev/resourc
 if gitops_prune projects/todo/dev && [ ! -e "$gitops/projects/todo/dev" ] && clean; then pass "cleanup removes an empty environment directory and commits"; else fail "cleanup removes an empty environment directory and commits"; fi
 if gitops_prune projects/todo/dev; then fail "a repeated cleanup reports no change"; else pass "a repeated cleanup reports no change"; fi
 rm -rf "$gitops" "$empty"
+# live: lingering objects (also while deleting) keep the directory without failing; an API error fails the step.
+for workflow in resource-sync app-remove; do
+  live_script=$(python3 -c 'import sys, yaml; t = {x["name"]: x for x in yaml.safe_load(open(sys.argv[1]))["spec"]["templates"]}; print(t["live"]["container"]["args"][0])' "charts/delivery/files/$workflow.yaml")
+  stub=$(mktemp -d)
+  live() { # live <empty> <kubectl output> <kubectl exit>: prints the live result, or "error"
+    printf '#!/bin/sh\nprintf "%%s" "%s"\nexit %s\n' "$2" "$3" > "$stub/kubectl" && chmod +x "$stub/kubectl"
+    rm -f "$stub/live"
+    if PATH="$stub:$PATH" PROJECT=todo ENVIRONMENT=dev EMPTY=$1 RESOURCE_KINDS="RdsPostgres S3Bucket DynamoTable" \
+      sh -euc "${live_script//\/tmp\/live/$stub/live}" >/dev/null 2>&1; then cat "$stub/live"; else echo error; fi
+  }
+  expect "$workflow live: a deleting S3Bucket keeps the directory and succeeds" '^true$' "$(live true 's3bucket.kro.run/assets' 0)"
+  expect "$workflow live: a chart PVC keeps the directory" '^true$' "$(live true 'persistentvolumeclaim/data-cache-0' 0)"
+  expect "$workflow live: an empty namespace lets cleanup run" '^false$' "$(live true '' 0)"
+  expect "$workflow live: an API error fails the step" '^error$' "$(live true '' 1)"
+  rm -rf "$stub"
+done
+expect "resource-sync live: a sync that still declares resources skips cleanup" '^true$' "$(live_script=$(python3 -c 'import sys, yaml; t = {x["name"]: x for x in yaml.safe_load(open(sys.argv[1]))["spec"]["templates"]}; print(t["live"]["container"]["args"][0])' charts/delivery/files/resource-sync.yaml); stub=$(mktemp -d); PROJECT=todo ENVIRONMENT=dev EMPTY=false RESOURCE_KINDS=x sh -euc "${live_script//\/tmp\/live/$stub/live}" >/dev/null && cat "$stub/live"; rm -rf "$stub")"
 fails "an empty manifest is refused" "manifest is empty" check </dev/null
 fails "a manifest of empty documents is refused" "no document" check <<<"$(printf -- '---\n# none\n')"
 # Agent Runway's zero-resource manifest, decoded the way the write step decodes the parameter.
