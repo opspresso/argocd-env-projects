@@ -28,22 +28,24 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   parameters from the directory path and the cluster. The guard template refuses an environment outside the list, any
   other namespace or host, a namespace without its tenant labels, and a workload image without a digest. The guard is defense in depth: a values file could set `app.raw` and turn it off. The boundary is that only
   the `deploy` step writes `app.yaml`, through the fixed `render.jq` mapping, with a deploy key that only the
-  `delivery-git` steps (`deploy`, `remove`, `write`) hold. Keep both, and never let other content reach the values files.
+  `delivery-git` steps (`deploy`, `remove`, `write`, `prune`) hold. Keep both, and never let other content reach the values files.
 - `app.tenant.environments` is a space-separated string, not a list: a values file could add items to a list
   parameter.
 - `commit.sh` removes an environment directory in two commits. A content commit never removes the directory: when no
   `app.yaml` and no resource remain, it keeps an empty `resources.yaml`, so Argo CD prunes under a live Application.
-  The `cleanup` step (`PRUNE_EMPTY=1`) of `app-remove` and `resource-sync` then removes the directory only if it is
-  still empty and the `live` step found no resource object in the namespace; the ApplicationSet deletes the empty
-  Application. Lingering objects are a normal state: both Workflows succeed, the directory stays, and the next sync or
-  removal of the environment tries again. Workflow results follow `remove`/`verify` and `write`. A Project leaves this repository
+  `charts/delivery/files/env-cleanup.yaml` then removes the directory (`commit.sh` `PRUNE_EMPTY=1`) only if it is
+  still empty and its `live` step finds no resource object in the namespace; the ApplicationSet deletes the empty
+  Application. The `cleanup` task of `app-remove` and `resource-sync` calls it right away, and CronWorkflow
+  `env-cleanup` sweeps every 15 minutes under the `deploy-<slug>-<env>` mutex, because Agent Runway sends no further
+  Workflow after the last removal. Lingering objects are a normal state: the Workflows succeed and the directory
+  stays. Workflow results follow `remove`/`verify` and `write`. A Project leaves this repository
   when all its services and resources are removed.
 - Without `app.yaml` the chart renders only the tenant objects (no Deployment, Service or HTTPRoute), so
   `resources.yaml` can use Secret `app-env` before the first deployment. `render.jq` turns the workload on.
 - `charts/delivery/files/render.jq` is the only mapping from Agent Runway's declaration to `app` chart values; the deploy step
   and `scripts/test.sh` both use it.
 - The app chart renders only the kinds that AppProject `projects` allows. Adding a kind needs a change there too.
-- `charts/delivery/files/{app-build,app-deploy,app-remove,resource-sync}.yaml` are static. Argo's `{{...}}` parameters must not
+- `charts/delivery/files/{app-build,app-deploy,app-remove,resource-sync,env-cleanup}.yaml` are static. Argo's `{{...}}` parameters must not
   pass through Helm; cluster values reach the steps through ConfigMap `delivery-settings`, and the shared scripts
   (`render.jq`, `check-resources.sh`, `commit.sh`) through ConfigMap `delivery-scripts`.
 - Keep the WorkflowTemplate names, parameters, results and DAG task names of the Workflow contract in

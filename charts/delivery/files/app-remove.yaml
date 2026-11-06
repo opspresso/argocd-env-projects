@@ -36,16 +36,15 @@ spec:
           - name: verify
             template: verify
             depends: remove
-          - name: live
-            template: live
+          # The second commit of a removal (env-cleanup). This Workflow holds the deployment lock already.
+          - name: cleanup
             depends: verify
+            templateRef: {name: env-cleanup, template: check-and-prune}
             arguments:
               parameters:
+                - {name: project, value: "{{workflow.parameters.project}}"}
+                - {name: environment, value: "{{workflow.parameters.environment}}"}
                 - {name: empty, value: "true"}
-          - name: cleanup
-            template: cleanup
-            depends: live
-            when: "{{tasks.live.outputs.parameters.live}} == false"
 
     # Removes projects/<project>/<environment>/app.yaml. Without it the chart renders no workload, and Argo CD prunes it.
     - name: remove
@@ -139,90 +138,3 @@ spec:
         resources: *small
 
 
-    # Reports whether the environment still holds live objects that a resource declaration created, in any state
-    # (also while deleting, for example an S3Bucket kept by BucketNotEmpty): kro instances of RESOURCE_KINDS and the
-    # StatefulSets and PVCs of ChartReleases. Never fails for that: such objects are a normal state, and cleanup then
-    # keeps the directory so the Application and the cause stay visible. A later sync or removal tries again.
-    - name: live
-      serviceAccountName: delivery-verify
-      activeDeadlineSeconds: 120
-      inputs:
-        parameters:
-          - name: empty
-      outputs:
-        parameters:
-          - name: live
-            valueFrom:
-              path: /tmp/live
-      container:
-        image: alpine/k8s:1.37.1
-        command: [sh, -euc]
-        args:
-          - |
-            namespace="app-${PROJECT}-${ENVIRONMENT}"
-            if [ "$EMPTY" != true ]; then
-              echo "The environment still declares resources"
-              echo true > /tmp/live
-              exit 0
-            fi
-            kinds=$(printf '%s' "$RESOURCE_KINDS" | tr 'A-Z ' 'a-z,')
-            # A failed kubectl stops the step (set -e): an unreadable namespace is not an empty one.
-            objects=$(kubectl get "${kinds},statefulsets.apps,persistentvolumeclaims" -n "$namespace" --ignore-not-found -o name)
-            if [ -n "$objects" ]; then
-              printf 'not empty yet: %s still holds\n%s\n' "$namespace" "$objects"
-              echo true > /tmp/live
-            else
-              echo "No resource object is left in $namespace"
-              echo false > /tmp/live
-            fi
-        env:
-          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
-          - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
-          - {name: EMPTY, value: "{{inputs.parameters.empty}}"}
-          - {name: HOME, value: /tmp}
-        envFrom:
-          - configMapRef:
-              name: delivery-settings
-        securityContext: *unprivileged
-        resources: *small
-
-    # The second commit of a removal: removes the environment directory once nothing is declared there, so the
-    # projects ApplicationSet deletes an Application that Argo CD already pruned. A directory with app.yaml or a
-    # resource stays (commit.sh PRUNE_EMPTY).
-    - name: cleanup
-      serviceAccountName: delivery-git
-      activeDeadlineSeconds: 300
-      container:
-        image: alpine/git:v2.54.0
-        command: [sh, /etc/delivery-scripts/commit.sh]
-        env:
-          - {name: PRUNE_EMPTY, value: "1"}
-          - {name: TARGET, value: "projects/{{workflow.parameters.project}}/{{workflow.parameters.environment}}"}
-          - {name: SUBJECT, value: "Remove {{workflow.parameters.project}} {{workflow.parameters.environment}} directory"}
-          - {name: BODY, value: "Deployment {{workflow.parameters.deployment}}"}
-          - {name: HOME, value: /tmp}
-        envFrom:
-          - configMapRef:
-              name: delivery-settings
-        # ssh needs a passwd entry for its user, and the image has one only for root. No capability is kept.
-        securityContext:
-          runAsUser: 0
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: [ALL]
-        resources: *small
-        volumeMounts:
-          - {name: scripts, mountPath: /etc/delivery-scripts, readOnly: true}
-          - {name: deploy-key, mountPath: /var/run/delivery/deploy-key, readOnly: true}
-          - {name: known-hosts, mountPath: /etc/delivery, readOnly: true}
-      volumes:
-        - name: deploy-key
-          secret:
-            secretName: gitops-deploy-key
-            defaultMode: 0440
-        - name: known-hosts
-          configMap:
-            name: delivery-known-hosts
-        - name: scripts
-          configMap:
-            name: delivery-scripts
