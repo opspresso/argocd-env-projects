@@ -128,7 +128,7 @@ done
 delivery=$(helm template delivery charts/delivery --namespace app-delivery \
   --set registry=123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects --set pushRoleArn=arn:aws:iam::123456789012:role/app-delivery-push \
   --set 'apiServer.cidrs={172.20.0.1/32,10.10.114.40/32}')
-for name in app-build app-deploy app-remove resource-sync; do
+for name in app-build app-deploy app-remove resource-sync env-cleanup; do
   expect "delivery renders WorkflowTemplate $name" "^  name: ${name}$" "$delivery"
 done
 secret_verbs=$(yq 'select(.kind == "Role" and .metadata.name == "agent-runway") | .rules[] | select(.resources[] == "secrets") | .verbs | join(",")' <<<"$delivery")
@@ -146,6 +146,10 @@ for kind in RoleBinding ClusterRoleBinding; do
 done
 resource_verbs=$(yq 'select(.kind == "ClusterRole" and .metadata.name == "agent-runway-resources") | .rules[] | (.apiGroups | join(",")) + " " + (.verbs | join(","))' <<<"$delivery" | paste -sd '|' -)
 if [ "$resource_verbs" = "kro.run get,list,watch|apps get" ]; then pass "Agent Runway may only read kro instances and StatefulSets"; else fail "Agent Runway may only read kro instances and StatefulSets ($resource_verbs)"; fi
+cron=$(yq 'select(.kind == "CronWorkflow")' <<<"$delivery")
+expect "the cleanup sweep runs every 15 minutes" '^ *- "?\*/15 \* \* \* \*"?$' "$cron"
+expect "the cleanup sweep runs from its WorkflowTemplate (reference mode)" 'workflowTemplateRef:' "$cron"
+expect "the cleanup sweep never overlaps itself" 'concurrencyPolicy: Forbid' "$cron"
 refuse "Helm leaves no template of its own" '\{\{ *\.' "$delivery"
 expect "the runner executor has its token Secret" 'name: delivery-runner.service-account-token' "$delivery"
 expect "runner Pods reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$delivery"
@@ -165,17 +169,18 @@ expect "app-build returns revision and image" '^image revision$' "$(line app-bui
 expect "app-deploy keeps the step names Agent Runway maps" '^deploy verify$' "$(line app-deploy tasks)"
 expect "app-deploy takes Agent Runway's parameters" '^deployment project environment image application host$' "$(line app-deploy parameters)"
 expect "app-deploy returns url" '^url$' "$(line app-deploy outputs)"
-expect "app-remove keeps the step names Agent Runway maps, then cleans up" '^remove verify live cleanup$' "$(line app-remove tasks)"
+expect "app-remove keeps the step names Agent Runway maps, then cleans up" '^remove verify cleanup$' "$(line app-remove tasks)"
 expect "app-remove takes Agent Runway's parameters" '^deployment project environment$' "$(line app-remove parameters)"
 expect "app-remove returns nothing" '^$' "$(line app-remove outputs)"
 expect "a removal waits for a deployment of the same environment" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line app-remove mutexes)"
-expect "resource-sync writes, then cleans up an emptied environment" '^write live cleanup$' "$(line resource-sync tasks)"
+expect "resource-sync writes, then cleans up an emptied environment" '^write cleanup$' "$(line resource-sync tasks)"
+expect "env-cleanup scans, then checks each environment" '^scan environment$' "$(line env-cleanup tasks)"
 expect "resource-sync takes Agent Runway's parameters" '^sync project environment manifest$' "$(line resource-sync parameters)"
 expect "resource-sync returns nothing" '^$' "$(line resource-sync outputs)"
 expect "one resource sync runs per environment" '^resources-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line resource-sync mutexes)"
 expect "one deployment runs per environment" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line app-deploy mutexes)"
 expect "builds are not serialized" '^$' "$(line app-build mutexes)"
-expect "only deploy, remove, write and cleanup hold the deploy key, as delivery-git" '^app-deploy:deploy:delivery-git app-remove:remove:delivery-git app-remove:cleanup:delivery-git resource-sync:write:delivery-git resource-sync:cleanup:delivery-git$' "$(line all deploy-key)"
+expect "only deploy, remove, write and prune hold the deploy key, as delivery-git" '^app-deploy:deploy:delivery-git app-remove:remove:delivery-git resource-sync:write:delivery-git env-cleanup:prune:delivery-git$' "$(line all deploy-key)"
 expect "a changed declaration exits 3 for Agent Runway" 'exit 3' "$(cat charts/delivery/files/app-build.yaml)"
 expect "deploy refuses an image of another Project" 'is not an image of \$\{REGISTRY\}/\$\{PROJECT\} pinned by digest' "$(cat charts/delivery/files/app-deploy.yaml)"
 
@@ -269,22 +274,35 @@ if gitops_prune projects/todo/dev && [ ! -e "$gitops/projects/todo/dev" ] && cle
 if gitops_prune projects/todo/dev; then fail "a repeated cleanup reports no change"; else pass "a repeated cleanup reports no change"; fi
 rm -rf "$gitops" "$empty"
 # live: lingering objects (also while deleting) keep the directory without failing; an API error fails the step.
-for workflow in resource-sync app-remove; do
-  live_script=$(python3 -c 'import sys, yaml; t = {x["name"]: x for x in yaml.safe_load(open(sys.argv[1]))["spec"]["templates"]}; print(t["live"]["container"]["args"][0])' "charts/delivery/files/$workflow.yaml")
-  stub=$(mktemp -d)
-  live() { # live <empty> <kubectl output> <kubectl exit>: prints the live result, or "error"
-    printf '#!/bin/sh\nprintf "%%s" "%s"\nexit %s\n' "$2" "$3" > "$stub/kubectl" && chmod +x "$stub/kubectl"
-    rm -f "$stub/live"
-    if PATH="$stub:$PATH" PROJECT=todo ENVIRONMENT=dev EMPTY=$1 RESOURCE_KINDS="RdsPostgres S3Bucket DynamoTable" \
-      sh -euc "${live_script//\/tmp\/live/$stub/live}" >/dev/null 2>&1; then cat "$stub/live"; else echo error; fi
-  }
-  expect "$workflow live: a deleting S3Bucket keeps the directory and succeeds" '^true$' "$(live true 's3bucket.kro.run/assets' 0)"
-  expect "$workflow live: a chart PVC keeps the directory" '^true$' "$(live true 'persistentvolumeclaim/data-cache-0' 0)"
-  expect "$workflow live: an empty namespace lets cleanup run" '^false$' "$(live true '' 0)"
-  expect "$workflow live: an API error fails the step" '^error$' "$(live true '' 1)"
-  rm -rf "$stub"
-done
-expect "resource-sync live: a sync that still declares resources skips cleanup" '^true$' "$(live_script=$(python3 -c 'import sys, yaml; t = {x["name"]: x for x in yaml.safe_load(open(sys.argv[1]))["spec"]["templates"]}; print(t["live"]["container"]["args"][0])' charts/delivery/files/resource-sync.yaml); stub=$(mktemp -d); PROJECT=todo ENVIRONMENT=dev EMPTY=false RESOURCE_KINDS=x sh -euc "${live_script//\/tmp\/live/$stub/live}" >/dev/null && cat "$stub/live"; rm -rf "$stub")"
+template_script() { python3 -c 'import sys, yaml; t = {x["name"]: x for x in yaml.safe_load(open("charts/delivery/files/env-cleanup.yaml"))["spec"]["templates"]}; print(t[sys.argv[1]]["container"]["args"][0])' "$1"; }
+live_script=$(template_script live)
+stub=$(mktemp -d)
+live() { # live <empty> <kubectl output> <kubectl exit>: prints the live result, or "error"
+  printf '#!/bin/sh\nprintf "%%s" "%s"\nexit %s\n' "$2" "$3" > "$stub/kubectl" && chmod +x "$stub/kubectl"
+  rm -f "$stub/live"
+  if PATH="$stub:$PATH" PROJECT=todo ENVIRONMENT=dev EMPTY=$1 RESOURCE_KINDS="RdsPostgres S3Bucket DynamoTable" \
+    sh -euc "${live_script//\/tmp\/live/$stub/live}" >/dev/null 2>&1; then cat "$stub/live"; else echo error; fi
+}
+expect "live: a deleting S3Bucket keeps the directory and succeeds" '^true$' "$(live true 's3bucket.kro.run/assets' 0)"
+expect "live: a chart PVC keeps the directory" '^true$' "$(live true 'persistentvolumeclaim/data-cache-0' 0)"
+expect "live: an empty namespace lets prune run" '^false$' "$(live true '' 0)"
+expect "live: an API error fails the step" '^error$' "$(live true '' 1)"
+expect "live: a sync that still declares resources skips prune" '^true$' "$(live false '' 0)"
+rm -rf "$stub"
+# scan: only directories that declare nothing are candidates.
+scan_repo=$(mktemp -d)
+mkdir -p "$scan_repo/projects/live/dev/resources" "$scan_repo/projects/gone/prod" "$scan_repo/projects/app/dev" "$scan_repo/projects/rds/dev"
+echo r > "$scan_repo/projects/live/dev/resources/cache.yaml" && echo '# h' > "$scan_repo/projects/live/dev/resources.yaml"
+printf '# h\n---\n' > "$scan_repo/projects/gone/prod/resources.yaml"
+echo app > "$scan_repo/projects/app/dev/app.yaml"
+printf '# h\nkind: RdsPostgres\n' > "$scan_repo/projects/rds/dev/resources.yaml"
+scan_script=$(template_script scan)
+scan_script=$(sed "1s|^git clone .*|cp -R '$scan_repo' '$scan_repo.work'|" <<<"$scan_script")
+scan_script=${scan_script//\/tmp\/gitops/$scan_repo.work}
+scan_script=${scan_script//\/tmp\/environments.json/$scan_repo.json}
+GITOPS_BRANCH=main GITOPS_REPOSITORY=x sh -euc "$scan_script" >/dev/null
+expect "scan lists only an environment that declares nothing" '^\[\{"project":"gone","environment":"prod"\}\]$' "$(cat "$scan_repo.json")"
+rm -rf "$scan_repo" "$scan_repo.work" "$scan_repo.json"
 fails "an empty manifest is refused" "manifest is empty" check </dev/null
 fails "a manifest of empty documents is refused" "no document" check <<<"$(printf -- '---\n# none\n')"
 # Agent Runway's zero-resource manifest, decoded the way the write step decodes the parameter.
@@ -308,9 +326,9 @@ fails "a duplicate name is refused" "uniquely named" check <<<"$(printf '%s\n---
 fails "a manifest that is not YAML is refused" "" check <<<"kind: [unclosed"
 
 if command -v argo >/dev/null; then
-  for name in app-build app-deploy app-remove resource-sync; do
-    if argo lint --offline "charts/delivery/files/$name.yaml" >/dev/null; then pass "argo lint accepts $name"; else fail "argo lint accepts $name"; fi
-  done
+  # One run: resource-sync and app-remove reference env-cleanup templates.
+  if argo lint --offline charts/delivery/files/{app-build,app-deploy,app-remove,resource-sync,env-cleanup}.yaml >/dev/null; then
+    pass "argo lint accepts the WorkflowTemplates"; else fail "argo lint accepts the WorkflowTemplates"; fi
 else
   echo "skip argo lint (argo CLI not installed)"
 fi

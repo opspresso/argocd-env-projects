@@ -4,7 +4,8 @@ Lines: "<template> tasks|parameters|outputs <names>" and "all deploy-key <templa
 """
 import yaml
 
-ENTRYPOINTS = {"app-build": "release", "app-deploy": "deployment", "app-remove": "removal", "resource-sync": "sync"}
+ENTRYPOINTS = {"app-build": "release", "app-deploy": "deployment", "app-remove": "removal", "resource-sync": "sync",
+               "env-cleanup": "sweep"}
 
 
 def load(name):
@@ -28,7 +29,7 @@ for name, entry in ENTRYPOINTS.items():
         assert spec["podGC"]["strategy"] == "OnWorkflowSuccess", name
     steps = {t["name"]: t for t in spec["templates"]}
     print(name, "tasks", " ".join(task["name"] for task in steps[entry]["dag"]["tasks"]))
-    print(name, "parameters", " ".join(p["name"] for p in spec["arguments"]["parameters"]))
+    print(name, "parameters", " ".join(p["name"] for p in spec.get("arguments", {}).get("parameters", [])))
     outputs = sorted(
         o["globalName"] for t in spec["templates"] for o in t.get("outputs", {}).get("parameters", []) if "globalName" in o
     )
@@ -36,7 +37,7 @@ for name, entry in ENTRYPOINTS.items():
     mutexes = [m["name"] for m in spec.get("synchronization", {}).get("mutexes", [])]
     print(name, "mutexes", " ".join(mutexes))
     for step in spec["templates"]:
-        if "dag" in step:
+        if "dag" in step or "steps" in step:
             continue
         # Every step names its identity. delivery-runner steps run app code: the token is in the executor only and
         # the runner NetworkPolicy applies.

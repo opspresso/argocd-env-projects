@@ -1,0 +1,221 @@
+# Removes environment directories that declare nothing once no resource object is left in their namespace, the second
+# commit of a removal (commit.sh PRUNE_EMPTY). resource-sync and app-remove call check-and-prune right after their own
+# commit, when the objects are usually still being deleted; CronWorkflow env-cleanup runs sweep every 15 minutes so a
+# directory left behind that way goes once Argo CD finished, even if Agent Runway sends no further Workflow for it.
+# A directory that declares something is never touched, and lingering objects are a normal state, never a failure.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: env-cleanup
+spec:
+  entrypoint: sweep
+  serviceAccountName: delivery-verify
+  activeDeadlineSeconds: 900
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 86400
+  podGC:
+    strategy: OnWorkflowSuccess
+  securityContext:
+    fsGroup: 1000
+  templates:
+    - name: sweep
+      dag:
+        tasks:
+          - name: scan
+            template: scan
+          - name: environment
+            template: locked
+            depends: scan
+            withParam: "{{tasks.scan.outputs.parameters.environments}}"
+            arguments:
+              parameters:
+                - {name: project, value: "{{item.project}}"}
+                - {name: environment, value: "{{item.environment}}"}
+                - {name: empty, value: "true"}
+
+    # Lists the environment directories that declare nothing: no app.yaml, no resources/<name>.yaml and a
+    # resources.yaml with comments only. Reads the public repository without a credential.
+    - name: scan
+      serviceAccountName: delivery-verify
+      activeDeadlineSeconds: 120
+      outputs:
+        parameters:
+          - name: environments
+            valueFrom:
+              path: /tmp/environments.json
+      container:
+        image: alpine/git:v2.54.0
+        command: [sh, -euc]
+        args:
+          - |
+            git clone -q --depth 1 --branch "$GITOPS_BRANCH" "https://github.com/${GITOPS_REPOSITORY}.git" /tmp/gitops
+            cd /tmp/gitops
+            list=""
+            for directory in projects/*/*; do
+              [ -d "$directory" ] || continue
+              project=$(basename "$(dirname "$directory")")
+              environment=$(basename "$directory")
+              printf '%s' "$project" | grep -qE '^[a-z][a-z0-9-]{1,30}[a-z0-9]$' || { echo "skip $directory: not a project name"; continue; }
+              printf '%s' "$environment" | grep -qE '^[a-z][a-z0-9]{1,11}$' || { echo "skip $directory: not an environment name"; continue; }
+              if [ -f "$directory/app.yaml" ] || [ -n "$(ls -A "$directory/resources" 2>/dev/null)" ] \
+                || grep -qvE '^[[:space:]]*(#.*|---[[:space:]]*)?$' "$directory/resources.yaml" 2>/dev/null; then
+                continue
+              fi
+              echo "candidate $directory"
+              list="${list:+$list,}{\"project\":\"$project\",\"environment\":\"$environment\"}"
+            done
+            echo "[$list]" > /tmp/environments.json
+            echo "Environments that declare nothing: [$list]"
+        env:
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: &unprivileged
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources: &small
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {memory: 512Mi}
+
+    # check-and-prune under the deployment lock of the environment, for callers that do not hold it already.
+    - name: locked
+      inputs:
+        parameters:
+          - name: project
+          - name: environment
+          - name: empty
+      synchronization:
+        mutexes:
+          - name: "deploy-{{inputs.parameters.project}}-{{inputs.parameters.environment}}"
+      steps:
+        - - name: check-and-prune
+            template: check-and-prune
+            arguments:
+              parameters:
+                - {name: project, value: "{{inputs.parameters.project}}"}
+                - {name: environment, value: "{{inputs.parameters.environment}}"}
+                - {name: empty, value: "{{inputs.parameters.empty}}"}
+
+    # app-remove holds the deployment lock itself and calls this directly.
+    - name: check-and-prune
+      inputs:
+        parameters:
+          - name: project
+          - name: environment
+          - name: empty
+      steps:
+        - - name: live
+            template: live
+            arguments:
+              parameters:
+                - {name: project, value: "{{inputs.parameters.project}}"}
+                - {name: environment, value: "{{inputs.parameters.environment}}"}
+                - {name: empty, value: "{{inputs.parameters.empty}}"}
+        - - name: prune
+            template: prune
+            when: "{{steps.live.outputs.parameters.live}} == false"
+            arguments:
+              parameters:
+                - {name: project, value: "{{inputs.parameters.project}}"}
+                - {name: environment, value: "{{inputs.parameters.environment}}"}
+
+    # Reports whether the environment still holds live objects that a resource declaration created, in any state
+    # (also while deleting, for example an S3Bucket kept by BucketNotEmpty): kro instances of RESOURCE_KINDS and the
+    # StatefulSets and PVCs of ChartReleases. Never fails for that: such objects are a normal state, and the directory
+    # then stays so the Application and the cause stay visible.
+    - name: live
+      serviceAccountName: delivery-verify
+      activeDeadlineSeconds: 120
+      inputs:
+        parameters:
+          - name: project
+          - name: environment
+          - name: empty
+      outputs:
+        parameters:
+          - name: live
+            valueFrom:
+              path: /tmp/live
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            printf '%s' "$PROJECT" | grep -qE '^[a-z][a-z0-9-]{1,30}[a-z0-9]$' || { echo "Invalid project $PROJECT"; exit 1; }
+            printf '%s' "$ENVIRONMENT" | grep -qE '^[a-z][a-z0-9]{1,11}$' || { echo "Invalid environment $ENVIRONMENT"; exit 1; }
+            namespace="app-${PROJECT}-${ENVIRONMENT}"
+            if [ "$EMPTY" != true ]; then
+              echo "The environment still declares resources"
+              echo true > /tmp/live
+              exit 0
+            fi
+            kinds=$(printf '%s' "$RESOURCE_KINDS" | tr 'A-Z ' 'a-z,')
+            # A failed kubectl stops the step (set -e): an unreadable namespace is not an empty one.
+            objects=$(kubectl get "${kinds},statefulsets.apps,persistentvolumeclaims" -n "$namespace" --ignore-not-found -o name)
+            if [ -n "$objects" ]; then
+              printf 'not empty yet: %s still holds\n%s\n' "$namespace" "$objects"
+              echo true > /tmp/live
+            else
+              echo "No resource object is left in $namespace"
+              echo false > /tmp/live
+            fi
+        env:
+          - {name: PROJECT, value: "{{inputs.parameters.project}}"}
+          - {name: ENVIRONMENT, value: "{{inputs.parameters.environment}}"}
+          - {name: EMPTY, value: "{{inputs.parameters.empty}}"}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: *unprivileged
+        resources: *small
+
+    # Removes the environment directory when it still declares nothing (commit.sh PRUNE_EMPTY); otherwise prints
+    # "not empty" and changes nothing. Git and push errors fail the step.
+    - name: prune
+      serviceAccountName: delivery-git
+      activeDeadlineSeconds: 300
+      inputs:
+        parameters:
+          - name: project
+          - name: environment
+      container:
+        image: alpine/git:v2.54.0
+        command: [sh, /etc/delivery-scripts/commit.sh]
+        env:
+          - {name: PRUNE_EMPTY, value: "1"}
+          - {name: TARGET, value: "projects/{{inputs.parameters.project}}/{{inputs.parameters.environment}}"}
+          - {name: SUBJECT, value: "Remove {{inputs.parameters.project}} {{inputs.parameters.environment}} directory"}
+          - {name: BODY, value: "Workflow {{workflow.name}}"}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        # ssh needs a passwd entry for its user, and the image has one only for root. No capability is kept.
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources: *small
+        volumeMounts:
+          - {name: scripts, mountPath: /etc/delivery-scripts, readOnly: true}
+          - {name: deploy-key, mountPath: /var/run/delivery/deploy-key, readOnly: true}
+          - {name: known-hosts, mountPath: /etc/delivery, readOnly: true}
+      volumes:
+        - name: deploy-key
+          secret:
+            secretName: gitops-deploy-key
+            defaultMode: 0440
+        - name: known-hosts
+          configMap:
+            name: delivery-known-hosts
+        - name: scripts
+          configMap:
+            name: delivery-scripts

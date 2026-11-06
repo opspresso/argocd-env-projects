@@ -1,0 +1,16 @@
+# Runs env-cleanup sweep every 15 minutes (see files/env-cleanup.yaml). Submitted by the Argo controller from the
+# WorkflowTemplate, as the reference mode requires.
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: env-cleanup
+spec:
+  schedules:
+    - "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    workflowTemplateRef:
+      name: env-cleanup

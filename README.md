@@ -10,7 +10,7 @@ Agent Runway가 배포하는 앱의 GitOps 저장소입니다. Studio Agent가 A
 | 경로 | 내용 | 쓰는 주체 |
 | --- | --- | --- |
 | `charts/app/` | 앱 Environment 하나의 wrapper chart. [opspresso/helm-charts](https://github.com/opspresso/helm-charts)의 `app` chart(argocd-env-apps의 sample-node·agent-*와 같은 chart)의 설정으로 Namespace·Deployment·Service·HTTPRoute·HPA·PDB·SecretStore·ExternalSecret·NetworkPolicy·ResourceQuota를 만든다. Namespace `app-<slug>-<env>`는 이 Application의 객체이므로 Project나 Environment가 없어지면 Argo CD가 namespace와 그 안의 모든 객체를 지운다. `app.yaml`이 없으면 Deployment·Service·HTTPRoute 없이 tenant 객체만 만든다. `app.raw`에는 환경·namespace·namespace label·host·image digest를 검사하는 guard만 둔다 | 운영자(PR) |
-| `charts/delivery/` | namespace `app-delivery`의 Argo Workflows WorkflowTemplate `app-build`·`app-deploy`·`app-remove`·`resource-sync`, 단계별 ServiceAccount·RBAC, 설정 | 운영자(PR) |
+| `charts/delivery/` | namespace `app-delivery`의 Argo Workflows WorkflowTemplate `app-build`·`app-deploy`·`app-remove`·`resource-sync`·`env-cleanup`, CronWorkflow `env-cleanup`, 단계별 ServiceAccount·RBAC, 설정 | 운영자(PR) |
 | `projects/<slug>/<env>/app.yaml` | Environment 하나의 `app` chart 값: 이미지 digest, 복제 수, port, env, probe, 자원. `app-deploy`의 deploy 단계가 `charts/delivery/files/render.jq`로 Agent Runway의 선언에서 만든다 | `app-deploy` workflow가 쓰고 `app-remove` workflow가 지운다 |
 | `projects/<slug>/<env>/resources.yaml` | Environment 하나의 AWS 전용 리소스(kro 인스턴스 `RdsPostgres`·`S3Bucket`·`DynamoTable`). Agent Runway가 렌더링한 manifest를 `resource-sync`의 write 단계가 검사해 기록한다 | `resource-sync` workflow만 |
 | `projects/<slug>/<env>/resources/<name>.yaml` | Kubernetes 전용 리소스 하나의 chart 이름·버전과 값(`postgres`·`valkey`, opspresso/helm-charts). ApplicationSet `project-resources`가 파일마다 Application `app-<project>-<env>-<name>-<id 8자리>`를 만든다 | `resource-sync` workflow만 |
@@ -19,13 +19,13 @@ Agent Runway가 배포하는 앱의 GitOps 저장소입니다. Studio Agent가 A
 Argo CD 객체는 [argocd-env-addons](https://github.com/opspresso/argocd-env-addons)의 `charts/argo-cd`가 선언합니다.
 
 - AppProject `projects`: `app-*` namespace(단, `app-delivery` 제외)에 `charts/app`이 만드는 종류와 플랫폼 kro 인스턴스 종류만 허용합니다.
-- AppProject `delivery`: `app-delivery` namespace와 `delivery-verify` ClusterRole만 허용합니다.
+- AppProject `delivery`: `app-delivery` namespace(CronWorkflow 포함)와 `delivery-verify` ClusterRole만 허용합니다.
 - Application `app-delivery`: `charts/delivery`를 동기화합니다.
 - ApplicationSet `projects`: 허용한 환경 목록(`app_delivery.environments`)의 `projects/*/<env>` 디렉터리마다
   Application `app-<slug>-<env>`를 만듭니다. Application은 `charts/app`(값: `app.yaml`)과 `resources.yaml`을 함께 동기화합니다.
   Project·Environment·namespace·도메인은 디렉터리 경로와 클러스터 설정에서 정하고, `charts/app`의 guard가 검사합니다.
   guard는 값 파일의 `app.raw`로 끌 수 있으므로 보조 방어입니다. 실제 경계는 `app.yaml`을 `deploy` 단계만 고정 매핑 `render.jq`로 쓰고,
-  deploy key를 `delivery-git` 단계(`deploy`·`remove`·`write`·`cleanup`)만 가진다는 점입니다.
+  deploy key를 `delivery-git` 단계(`deploy`·`remove`·`write`·`prune`)만 가진다는 점입니다.
 
 ## 배포 흐름
 
@@ -57,14 +57,15 @@ flowchart LR
 | `app-deploy` | `verify` | `delivery-verify` | rollout 완료와 `https://<host><health>`의 2xx 응답을 기다린다 |
 | `app-remove` | `remove` | `delivery-git` | `projects/<slug>/<env>/app.yaml`을 지운다. 리소스는 그대로 둔다 |
 | `app-remove` | `verify` | `delivery-verify` | Argo CD가 namespace의 Deployment `app`을 지울 때까지 기다린다 |
-| `app-remove` | `live` | `delivery-verify` | `resource-sync`의 `live`와 같다 |
-| `app-remove` | `cleanup` | `delivery-git` | 환경 디렉터리에 `app.yaml`과 리소스가 없고 `live`가 남은 객체가 없다고 하면 디렉터리를 지운다. 남아 있으면 아무것도 바꾸지 않는다 |
+| `app-remove` | `cleanup` | `delivery-verify`·`delivery-git` | `env-cleanup`의 `check-and-prune`. 아래 `env-cleanup`의 `live`·`prune`과 같다. 이 Workflow가 이미 잡은 mutex 안에서 실행한다 |
 | `resource-sync` | `write` | `delivery-git` | manifest가 허용한 kro 인스턴스 종류(`resourceKinds`) 또는 chart(`resourceCharts`)이고 그 환경 namespace에 속하는지, 이름이 `^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$`이고 고유한지 확인하고 `projects/<slug>/<env>/resources.yaml`과 `resources/<name>.yaml`을 통째로 바꾼다. 리소스를 모두 지우려면 `{apiVersion: v1, kind: List, items: []}` 문서를 보낸다. 빈 manifest는 거부한다 |
-| `resource-sync` | `live` | `delivery-verify` | 리소스를 모두 지운 sync이면 namespace에 kro 인스턴스·StatefulSet·PVC가 남았는지 확인한다(삭제 중인 객체 포함). 남아 있어도 실패하지 않는다 |
-| `resource-sync` | `cleanup` | `delivery-git` | `live`가 남은 객체가 없다고 할 때만 실행한다. `app-remove`의 `cleanup`과 같다. `deploy-<slug>-<env>` mutex를 잡는다 |
+| `resource-sync` | `cleanup` | `delivery-verify`·`delivery-git` | `env-cleanup`의 `locked`. `deploy-<slug>-<env>` mutex를 잡고 `check-and-prune`을 실행한다 |
+| `env-cleanup` | `scan` | `delivery-verify` | 공개 저장소를 자격 증명 없이 clone하고, `app.yaml`·`resources/<name>.yaml`이 없고 `resources.yaml`에 주석만 있는 환경 디렉터리를 찾는다 |
+| `env-cleanup` | `live` | `delivery-verify` | namespace에 kro 인스턴스(`RESOURCE_KINDS`)·StatefulSet·PVC가 남았는지 확인한다(삭제 중인 객체 포함). 남아 있으면 `not empty yet`을 기록하고 성공한다. API 오류만 실패한다 |
+| `env-cleanup` | `prune` | `delivery-git` | `live`가 남은 객체가 없다고 할 때만 실행한다. `commit.sh PRUNE_EMPTY`로 디렉터리가 여전히 비었으면 지우고, 아니면 `not empty`를 출력하고 아무것도 바꾸지 않는다 |
 
 `resource-sync`는 `resources-<slug>-<env>`, `app-deploy`와 `app-remove`는 같은 `deploy-<slug>-<env>` mutex를 잡습니다.
-환경 디렉터리는 commit 두 번으로 지웁니다. 마지막 `app.yaml`이나 리소스를 지우는 commit은 디렉터리에 빈 `resources.yaml`을 남깁니다. 그래서 Application이 남아 있는 동안 Argo CD가 workload와 리소스를 정리합니다. namespace에 리소스 객체(kro 인스턴스·StatefulSet·PVC)가 남지 않았으면 `cleanup` 단계가 디렉터리를 지우는 두 번째 commit을 만듭니다. ApplicationSet이 빈 Application을 삭제하고, Argo CD가 남은 테넌트 객체를 정리합니다. 객체가 남은 `S3Bucket`처럼 아직 삭제 중인 객체가 있거나 그 사이에 `app.yaml`·리소스가 다시 생기면 디렉터리는 빈 선언으로 남습니다. Workflow는 성공하고, 같은 환경의 다음 `resource-sync`나 `app-remove`가 다시 확인합니다. Argo CD가 만든 namespace는 남습니다. 같은 환경의 다음 Workflow는 앞 Workflow가 끝날 때까지 `Pending`으로 기다리고, 다른 환경과 `app-build`는 기다리지 않습니다.
+환경 디렉터리는 commit 두 번으로 지웁니다. 마지막 `app.yaml`이나 리소스를 지우는 commit은 디렉터리에 빈 `resources.yaml`을 남깁니다. 그래서 Application이 남아 있는 동안 Argo CD가 workload와 리소스를 정리합니다. namespace에 리소스 객체(kro 인스턴스·StatefulSet·PVC)가 남지 않았으면 `cleanup` 단계가 디렉터리를 지우는 두 번째 commit을 만듭니다. ApplicationSet이 빈 Application을 삭제하고, Argo CD가 남은 테넌트 객체를 정리합니다. 객체가 남은 `S3Bucket`처럼 아직 삭제 중인 객체가 있거나 그 사이에 `app.yaml`·리소스가 다시 생기면 디렉터리는 빈 선언으로 남습니다. Workflow는 성공합니다. CronWorkflow `env-cleanup`이 15분마다 `scan`으로 빈 선언 디렉터리를 찾고, 환경마다 `deploy-<slug>-<env>` mutex 안에서 `live`·`prune`을 다시 실행합니다. 지울 디렉터리가 없으면 commit하지 않습니다. Argo CD가 만든 namespace는 남습니다. 같은 환경의 다음 Workflow는 앞 Workflow가 끝날 때까지 `Pending`으로 기다리고, 다른 환경과 `app-build`는 기다리지 않습니다.
 
 `test`·`build`는 앱 코드를 실행합니다. 이 Pod는 Git 자격 증명·AWS·Kubernetes 권한을 받지 않고, NetworkPolicy
 `delivery-runner`로 DNS와 공인 인터넷에만 연결합니다.
