@@ -4,6 +4,10 @@ apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow
 metadata:
   name: env-cleanup
+  annotations:
+    # After the WorkflowTemplates: the controller validates a CronWorkflow once when it appears, and a missing
+    # template leaves it unscheduled until the CronWorkflow changes.
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   schedules:
     - "*/15 * * * *"
