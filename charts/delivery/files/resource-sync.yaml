@@ -4,7 +4,8 @@
 # Agent Runway reads their status there.
 # Agent Runway is the only submitter and names the Workflow resources-<Sync ID>. It holds no GitOps credential:
 # only this step's deploy key writes. Removing every resource of the environment needs the explicit document
-# {apiVersion: v1, kind: List, items: []}; an empty manifest is refused.
+# {apiVersion: v1, kind: List, items: []}; an empty manifest is refused. After such a sync, prune waits until Argo CD
+# deleted the resources and cleanup removes the environment directory when no app.yaml remains either.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
@@ -17,7 +18,8 @@ spec:
     mutexes:
       - name: "resources-{{workflow.parameters.project}}-{{workflow.parameters.environment}}"
   serviceAccountName: delivery-runner
-  activeDeadlineSeconds: 600
+  # write takes seconds; prune waits up to 15 minutes for deleted databases.
+  activeDeadlineSeconds: 1800
   ttlStrategy:
     secondsAfterSuccess: 86400
     secondsAfterFailure: 86400
@@ -39,6 +41,14 @@ spec:
         tasks:
           - name: write
             template: write
+          - name: prune
+            template: prune
+            depends: write
+            when: "{{tasks.write.outputs.parameters.empty}} == true"
+          - name: cleanup
+            template: cleanup
+            depends: prune
+            when: "{{tasks.write.outputs.parameters.empty}} == true"
 
     # The init container checks the manifest: only the instance kinds of the platform's ResourceGraphDefinitions
     # (RESOURCE_KINDS in delivery-settings) and the charts in RESOURCE_CHARTS, in this environment's namespace.
@@ -60,6 +70,12 @@ spec:
               sh /etc/delivery-scripts/check-resources.sh "$namespace" "$RESOURCE_KINDS" "$RESOURCE_CHARTS" /work/declaration \
                 "# Written by the resource-sync workflow for Sync ${SYNC}. Do not edit." < /work/manifest.yaml
               echo "Checked the resources of $namespace"
+              # True only for the explicit empty List: the environment then declares no resource.
+              if [ -z "$(ls -A /work/declaration/resources)" ] && ! grep -qvE '^#' /work/declaration/resources.yaml; then
+                echo true > /work/empty
+              else
+                echo false > /work/empty
+              fi
           env:
             - {name: PROJECT, value: "{{workflow.parameters.project}}"}
             - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
@@ -82,6 +98,11 @@ spec:
           volumeMounts:
             - {name: work, mountPath: /work}
             - {name: scripts, mountPath: /etc/delivery-scripts, readOnly: true}
+      outputs:
+        parameters:
+          - name: empty
+            valueFrom:
+              path: /work/empty
       container:
         image: alpine/git:v2.54.0
         command: [sh, /etc/delivery-scripts/commit.sh]
@@ -109,6 +130,89 @@ spec:
       volumes:
         - name: work
           emptyDir: {}
+        - name: deploy-key
+          secret:
+            secretName: gitops-deploy-key
+            defaultMode: 0440
+        - name: known-hosts
+          configMap:
+            name: delivery-known-hosts
+        - name: scripts
+          configMap:
+            name: delivery-scripts
+
+    # Waits until Argo CD deleted the resources of the environment: no kro instance of RESOURCE_KINDS and no Pod of a
+    # ChartRelease (any release other than the app) in its namespace.
+    - name: prune
+      serviceAccountName: delivery-verify
+      activeDeadlineSeconds: 1000
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            namespace="app-${PROJECT}-${ENVIRONMENT}"
+            kinds=$(printf '%s' "$RESOURCE_KINDS" | tr 'A-Z ' 'a-z,')
+            echo "Waiting for the resources in $namespace to be removed"
+            deadline=$(( $(date +%s) + 900 ))
+            while :; do
+              # A failed kubectl stops the step (set -e): an unreadable namespace is not an empty one.
+              instances=$(kubectl get "$kinds" -n "$namespace" --ignore-not-found -o name)
+              pods=$(kubectl get pods -n "$namespace" -o name \
+                -l "app.kubernetes.io/instance,app.kubernetes.io/instance!=app-${PROJECT}-${ENVIRONMENT}")
+              [ -z "$instances$pods" ] && break
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                printf 'Still in %s after 15 minutes:\n%s\n%s\n' "$namespace" "$instances" "$pods"
+                exit 1
+              fi
+              sleep 15
+            done
+            echo "The resources in $namespace are removed"
+        env:
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: *unprivileged
+        resources: *small
+
+    # The second commit of a removal: removes the environment directory once nothing is declared there, so the
+    # projects ApplicationSet deletes an Application that Argo CD already pruned. A directory with app.yaml or a
+    # resource stays (commit.sh PRUNE_EMPTY).
+    - name: cleanup
+      serviceAccountName: delivery-git
+      activeDeadlineSeconds: 300
+      # A removal or a deployment of this environment commits app.yaml; cleanup takes their mutex. Neither takes the
+      # resources mutex, so the two never wait for each other.
+      synchronization:
+        mutexes:
+          - name: "deploy-{{workflow.parameters.project}}-{{workflow.parameters.environment}}"
+      container:
+        image: alpine/git:v2.54.0
+        command: [sh, /etc/delivery-scripts/commit.sh]
+        env:
+          - {name: PRUNE_EMPTY, value: "1"}
+          - {name: TARGET, value: "projects/{{workflow.parameters.project}}/{{workflow.parameters.environment}}"}
+          - {name: SUBJECT, value: "Remove {{workflow.parameters.project}} {{workflow.parameters.environment}} directory"}
+          - {name: BODY, value: "Sync {{workflow.parameters.sync}}"}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        # ssh needs a passwd entry for its user, and the image has one only for root. No capability is kept.
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources: *small
+        volumeMounts:
+          - {name: scripts, mountPath: /etc/delivery-scripts, readOnly: true}
+          - {name: deploy-key, mountPath: /var/run/delivery/deploy-key, readOnly: true}
+          - {name: known-hosts, mountPath: /etc/delivery, readOnly: true}
+      volumes:
         - name: deploy-key
           secret:
             secretName: gitops-deploy-key

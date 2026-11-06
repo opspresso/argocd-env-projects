@@ -165,17 +165,17 @@ expect "app-build returns revision and image" '^image revision$' "$(line app-bui
 expect "app-deploy keeps the step names Agent Runway maps" '^deploy verify$' "$(line app-deploy tasks)"
 expect "app-deploy takes Agent Runway's parameters" '^deployment project environment image application host$' "$(line app-deploy parameters)"
 expect "app-deploy returns url" '^url$' "$(line app-deploy outputs)"
-expect "app-remove keeps the step names Agent Runway maps" '^remove verify$' "$(line app-remove tasks)"
+expect "app-remove keeps the step names Agent Runway maps, then cleans up" '^remove verify cleanup$' "$(line app-remove tasks)"
 expect "app-remove takes Agent Runway's parameters" '^deployment project environment$' "$(line app-remove parameters)"
 expect "app-remove returns nothing" '^$' "$(line app-remove outputs)"
 expect "a removal waits for a deployment of the same environment" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line app-remove mutexes)"
-expect "resource-sync has one write step" '^write$' "$(line resource-sync tasks)"
+expect "resource-sync writes, then prunes and cleans up an emptied environment" '^write prune cleanup$' "$(line resource-sync tasks)"
 expect "resource-sync takes Agent Runway's parameters" '^sync project environment manifest$' "$(line resource-sync parameters)"
 expect "resource-sync returns nothing" '^$' "$(line resource-sync outputs)"
 expect "one resource sync runs per environment" '^resources-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line resource-sync mutexes)"
 expect "one deployment runs per environment" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line app-deploy mutexes)"
 expect "builds are not serialized" '^$' "$(line app-build mutexes)"
-expect "only deploy, remove and write hold the deploy key, as delivery-git" '^app-deploy:deploy:delivery-git app-remove:remove:delivery-git resource-sync:write:delivery-git$' "$(line all deploy-key)"
+expect "only deploy, remove, write and cleanup hold the deploy key, as delivery-git" '^app-deploy:deploy:delivery-git app-remove:remove:delivery-git app-remove:cleanup:delivery-git resource-sync:write:delivery-git resource-sync:cleanup:delivery-git$' "$(line all deploy-key)"
 expect "a changed declaration exits 3 for Agent Runway" 'exit 3' "$(cat charts/delivery/files/app-build.yaml)"
 expect "deploy refuses an image of another Project" 'is not an image of \$\{REGISTRY\}/\$\{PROJECT\} pinned by digest' "$(cat charts/delivery/files/app-deploy.yaml)"
 
@@ -235,20 +235,38 @@ fails "an image override is refused" "ChartReleases of charts" check <<<"${relea
     image: \{repository: evil\}}"
 fails "a chart version without a fixed number is refused" "ChartReleases of charts" check <<<"${release/version: 1.0.0/version: latest}"
 expect "a push that loses the GitHub ref lock is retried" 'cannot lock ref' "$(grep -E 'grep -qE' charts/delivery/files/commit.sh)"
-# commit.sh's commit(): an empty SOURCE removes TARGET, and an environment directory without app.yaml and resources goes.
+# commit.sh's commit(): an empty SOURCE removes TARGET. An emptied environment directory stays with an empty
+# resources.yaml (commit 1); PRUNE_EMPTY removes it only while it is still empty (commit 2).
 gitops=$(mktemp -d)
-commit_fn=$(sed -n '/^commit() {/,/^}/p' charts/delivery/files/commit.sh)
-gitops_commit() { (cd "$gitops" && SOURCE=$1 TARGET=$2 SUBJECT=test BODY=test bash -c "$commit_fn"$'\n'"commit" >/dev/null 2>&1); }
+commit_fn=$(sed -n '/^empty_environment() {/,/^}/p;/^commit() {/,/^}/p' charts/delivery/files/commit.sh)
+gitops_commit() { (cd "$gitops" && SOURCE=$1 TARGET=$2 PRUNE_EMPTY=${3:-} SUBJECT=test BODY=test bash -c "$commit_fn"$'\n'"commit" >/dev/null 2>&1); }
+gitops_prune() { gitops_commit "" "$1" 1; }
+tracked() { git -C "$gitops" ls-files "$1"; }
+clean() { [ -z "$(git -C "$gitops" status --porcelain)" ]; }
 git -C "$gitops" init -q && git -C "$gitops" config user.email t@t && git -C "$gitops" config user.name t
 mkdir -p "$gitops/projects/todo/dev/resources" && echo app > "$gitops/projects/todo/dev/app.yaml"
 echo r > "$gitops/projects/todo/dev/resources/main.yaml" && echo h > "$gitops/projects/todo/dev/resources.yaml"
+mkdir -p "$gitops/projects/solo/dev" && echo app > "$gitops/projects/solo/dev/app.yaml"
 git -C "$gitops" add -A && git -C "$gitops" commit -qm init
 gitops_commit "" projects/todo/dev/app.yaml
 if [ ! -e "$gitops/projects/todo/dev/app.yaml" ] && [ -f "$gitops/projects/todo/dev/resources/main.yaml" ]; then pass "a removal keeps the resources"; else fail "a removal keeps the resources"; fi
-empty=$(mktemp -d) && echo h > "$empty/resources.yaml"
+if ! gitops_prune projects/todo/dev && [ -n "$(tracked projects/todo/dev/resources/main.yaml)" ]; then pass "cleanup keeps a directory that still has a resource"; else fail "cleanup keeps a directory that still has a resource"; fi
+empty=$(mktemp -d) && mkdir "$empty/resources" && echo '# h' > "$empty/resources.yaml"
 gitops_commit "$empty" projects/todo/dev
-if [ ! -e "$gitops/projects/todo/dev" ] && [ -z "$(git -C "$gitops" status --porcelain)" ]; then pass "an environment without app and resources is removed and committed"; else fail "an environment without app and resources is removed and committed"; fi
+if [ -n "$(tracked projects/todo/dev/resources.yaml)" ] && [ -z "$(tracked projects/todo/dev/resources)" ] && clean; then
+  pass "removing the last resource keeps the directory with an empty declaration"; else fail "removing the last resource keeps the directory with an empty declaration"; fi
+gitops_commit "" projects/solo/dev/app.yaml
+if [ -n "$(tracked projects/solo/dev/resources.yaml)" ] && [ -z "$(tracked projects/solo/dev/app.yaml)" ] && clean; then
+  pass "removing the only app.yaml keeps the directory with an empty declaration"; else fail "removing the only app.yaml keeps the directory with an empty declaration"; fi
 if gitops_commit "" projects/todo/dev/app.yaml; then fail "a repeated removal reports no change"; else pass "a repeated removal reports no change"; fi
+# A deployment that raced in before cleanup: the directory stays.
+echo app > "$gitops/projects/solo/dev/app.yaml" && git -C "$gitops" add -A && git -C "$gitops" commit -qm redeploy
+if ! gitops_prune projects/solo/dev && [ -n "$(tracked projects/solo/dev/app.yaml)" ]; then pass "cleanup keeps a directory with app.yaml"; else fail "cleanup keeps a directory with app.yaml"; fi
+printf '# h\nkind: RdsPostgres\n' > "$gitops/projects/solo/dev/resources.yaml" && rm "$gitops/projects/solo/dev/app.yaml"
+git -C "$gitops" add -A && git -C "$gitops" commit -qm instance
+if ! gitops_prune projects/solo/dev && [ -n "$(tracked projects/solo/dev/resources.yaml)" ]; then pass "cleanup keeps a directory whose resources.yaml declares an instance"; else fail "cleanup keeps a directory whose resources.yaml declares an instance"; fi
+if gitops_prune projects/todo/dev && [ ! -e "$gitops/projects/todo/dev" ] && clean; then pass "cleanup removes an empty environment directory and commits"; else fail "cleanup removes an empty environment directory and commits"; fi
+if gitops_prune projects/todo/dev; then fail "a repeated cleanup reports no change"; else pass "a repeated cleanup reports no change"; fi
 rm -rf "$gitops" "$empty"
 fails "an empty manifest is refused" "manifest is empty" check </dev/null
 fails "a manifest of empty documents is refused" "no document" check <<<"$(printf -- '---\n# none\n')"

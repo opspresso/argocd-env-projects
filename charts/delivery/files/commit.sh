@@ -3,8 +3,13 @@
 # and GITOPS_REPOSITORY, GITOPS_BRANCH, GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL from ConfigMap delivery-settings.
 # A file SOURCE replaces the file TARGET, and an empty SOURCE removes it. A directory SOURCE is the whole resource
 # declaration of the environment directory TARGET: it replaces resources.yaml and resources/, and nothing else there.
-# An environment directory with no app.yaml and no resource is removed, so the projects ApplicationSet deletes its
-# Application and Argo CD prunes what it held.
+# The environment directory is removed in two commits, so its Application prunes the workload and the resources
+# while it still exists:
+# 1. A content commit never removes the directory. When no app.yaml and no resource remain, it keeps resources.yaml
+#    with no resource, so Argo CD prunes under a comparable Application.
+# 2. PRUNE_EMPTY=1 with TARGET=projects/<slug>/<env> (the cleanup steps) removes that directory only when it is still
+#    empty, so the projects ApplicationSet deletes the already empty Application and its namespace. A directory that
+#    holds app.yaml or a resource (for example from a deployment that raced in) stays.
 set -eu
 # ssh refuses a group-readable key, and the Secret volume is group-readable for fsGroup.
 install -m 0600 /var/run/delivery/deploy-key/key "$HOME/key"
@@ -13,8 +18,23 @@ git config --global user.name "$GIT_AUTHOR_NAME"
 git config --global user.email "$GIT_AUTHOR_EMAIL"
 git clone -q --depth 20 --branch "$GITOPS_BRANCH" "git@github.com:${GITOPS_REPOSITORY}.git" /tmp/gitops
 cd /tmp/gitops
+# True when the environment directory $1 holds no app.yaml and no resource: resources/ is empty and resources.yaml
+# has no line other than comments, blank lines and document separators.
+empty_environment() {
+  [ ! -f "$1/app.yaml" ] && [ -z "$(ls -A "$1/resources" 2>/dev/null)" ] \
+    && ! grep -qvE '^[[:space:]]*(#.*|---[[:space:]]*)?$' "$1/resources.yaml" 2>/dev/null
+}
 # Returns 1 when the target already has this content, so a resubmitted Workflow succeeds without a new commit.
 commit() {
+  if [ "${PRUNE_EMPTY:-}" = 1 ]; then
+    if [ ! -d "$TARGET" ]; then return 1; fi
+    if ! empty_environment "$TARGET"; then echo "$TARGET is not empty"; return 1; fi
+    rm -rf "$TARGET"
+    git add -A
+    git diff --cached --quiet && return 1
+    git commit -q -m "$SUBJECT" -m "$BODY"
+    return 0
+  fi
   if [ -z "$SOURCE" ]; then
     directory=$(dirname "$TARGET")
     rm -f "$TARGET"
@@ -28,8 +48,9 @@ commit() {
     mkdir -p "$directory"
     cp "$SOURCE" "$TARGET"
   fi
-  if [ ! -f "$directory/app.yaml" ] && [ -z "$(ls -A "$directory/resources" 2>/dev/null)" ]; then
-    rm -rf "$directory"
+  # Git keeps no empty directory: without a file the ApplicationSet would delete the Application in this commit.
+  if empty_environment "$directory" && [ ! -f "$directory/resources.yaml" ]; then
+    printf '%s\n' "# No resources. The cleanup step removes this directory once Argo CD pruned it." > "$directory/resources.yaml"
   fi
   # The whole fresh clone: a directory that is already gone is not a pathspec git add accepts.
   git add -A
