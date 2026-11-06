@@ -150,6 +150,7 @@ cron=$(yq 'select(.kind == "CronWorkflow")' <<<"$delivery")
 expect "the cleanup sweep runs every 15 minutes" '^ *- "?\*/15 \* \* \* \*"?$' "$cron"
 expect "the cleanup sweep runs from its WorkflowTemplate (reference mode)" 'workflowTemplateRef:' "$cron"
 expect "the cleanup sweep never overlaps itself" 'concurrencyPolicy: Forbid' "$cron"
+expect "the cleanup sweep is applied after its WorkflowTemplate" 'argocd.argoproj.io/sync-wave: "1"' "$cron"
 refuse "Helm leaves no template of its own" '\{\{ *\.' "$delivery"
 expect "the runner executor has its token Secret" 'name: delivery-runner.service-account-token' "$delivery"
 expect "runner Pods reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$delivery"
