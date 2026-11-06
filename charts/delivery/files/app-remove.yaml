@@ -1,6 +1,6 @@
 # One removal: stop the service of one Project environment (agent-platform docs/APP_DELIVERY.md). Agent Runway is the
 # only submitter and names the Workflow deploy-<Deployment ID>, like a deployment. The resources of the environment
-# stay; commit.sh removes the environment directory when no app.yaml and no resource remain there.
+# stay; cleanup removes the environment directory after verify when no app.yaml and no resource remain there.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
@@ -35,6 +35,9 @@ spec:
           - name: verify
             template: verify
             depends: remove
+          - name: cleanup
+            template: cleanup
+            depends: verify
 
     # Removes projects/<project>/<environment>/app.yaml. Without it the chart renders no workload, and Argo CD prunes it.
     - name: remove
@@ -126,3 +129,44 @@ spec:
           - {name: HOME, value: /tmp}
         securityContext: *unprivileged
         resources: *small
+
+    # The second commit of a removal: removes the environment directory once nothing is declared there, so the
+    # projects ApplicationSet deletes an Application that Argo CD already pruned. A directory with app.yaml or a
+    # resource stays (commit.sh PRUNE_EMPTY).
+    - name: cleanup
+      serviceAccountName: delivery-git
+      activeDeadlineSeconds: 300
+      container:
+        image: alpine/git:v2.54.0
+        command: [sh, /etc/delivery-scripts/commit.sh]
+        env:
+          - {name: PRUNE_EMPTY, value: "1"}
+          - {name: TARGET, value: "projects/{{workflow.parameters.project}}/{{workflow.parameters.environment}}"}
+          - {name: SUBJECT, value: "Remove {{workflow.parameters.project}} {{workflow.parameters.environment}} directory"}
+          - {name: BODY, value: "Deployment {{workflow.parameters.deployment}}"}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        # ssh needs a passwd entry for its user, and the image has one only for root. No capability is kept.
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources: *small
+        volumeMounts:
+          - {name: scripts, mountPath: /etc/delivery-scripts, readOnly: true}
+          - {name: deploy-key, mountPath: /var/run/delivery/deploy-key, readOnly: true}
+          - {name: known-hosts, mountPath: /etc/delivery, readOnly: true}
+      volumes:
+        - name: deploy-key
+          secret:
+            secretName: gitops-deploy-key
+            defaultMode: 0440
+        - name: known-hosts
+          configMap:
+            name: delivery-known-hosts
+        - name: scripts
+          configMap:
+            name: delivery-scripts
