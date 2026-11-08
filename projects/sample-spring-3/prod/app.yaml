@@ -1,0 +1,50 @@
+# Written by the app-deploy workflow for Deployment c4628c4a-038b-4d89-8ea8-dc089d96fdf7. Do not edit.
+deployment: c4628c4a-038b-4d89-8ea8-dc089d96fdf7
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-spring-3@sha256:fe6f1eebc4352ddb81eb787e80be17d603742a815647037911d2b074ec169eb5
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: c4628c4a-038b-4d89-8ea8-dc089d96fdf7
+  podAnnotations:
+    opspresso.com/deployment: c4628c4a-038b-4d89-8ea8-dc089d96fdf7
