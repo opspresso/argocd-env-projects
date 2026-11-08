@@ -1,0 +1,50 @@
+# Written by the app-deploy workflow for Deployment f1204107-8440-49c6-95d0-f2ed3b795deb. Do not edit.
+deployment: f1204107-8440-49c6-95d0-f2ed3b795deb
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo-valkey@sha256:236a925cfb1250d08fc59f5e8e2fe03693ceb35dc997c0f83c27035bf8ccbc1e
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: f1204107-8440-49c6-95d0-f2ed3b795deb
+  podAnnotations:
+    opspresso.com/deployment: f1204107-8440-49c6-95d0-f2ed3b795deb
