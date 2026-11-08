@@ -1,10 +1,10 @@
-# Written by the app-deploy workflow for Deployment 981911e0-55a7-47f0-bc7d-dc586ab7d17b. Do not edit.
-deployment: 981911e0-55a7-47f0-bc7d-dc586ab7d17b
+# Written by the app-deploy workflow for Deployment 090e9f65-0dde-4f38-9589-d86986c4e0fb. Do not edit.
+deployment: 090e9f65-0dde-4f38-9589-d86986c4e0fb
 app:
   controller:
     enabled: true
   image:
-    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-spring-3@sha256:fe6f1eebc4352ddb81eb787e80be17d603742a815647037911d2b074ec169eb5
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-spring-3@sha256:7c026de5ba5392a08e5acaa7759885755bbcd17bc82b415fede89d1a2a138fda
   replicaCount: 1
   autoscaling:
     enabled: false
@@ -45,6 +45,6 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: 981911e0-55a7-47f0-bc7d-dc586ab7d17b
+      force-sync: 090e9f65-0dde-4f38-9589-d86986c4e0fb
   podAnnotations:
-    opspresso.com/deployment: 981911e0-55a7-47f0-bc7d-dc586ab7d17b
+    opspresso.com/deployment: 090e9f65-0dde-4f38-9589-d86986c4e0fb
