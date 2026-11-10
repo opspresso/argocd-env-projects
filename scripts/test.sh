@@ -133,7 +133,7 @@ done
 delivery=$(helm template delivery charts/delivery --namespace app-delivery \
   --set registry=123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects --set pushRoleArn=arn:aws:iam::123456789012:role/app-delivery-push \
   --set 'apiServer.cidrs={172.20.0.1/32,10.10.114.40/32}')
-for name in app-build app-deploy app-remove resource-sync env-cleanup; do
+for name in app-build app-deploy app-remove app-deploy-eb app-remove-eb resource-sync env-cleanup; do
   expect "delivery renders WorkflowTemplate $name" "^  name: ${name}$" "$delivery"
 done
 secret_verbs=$(yq 'select(.kind == "Role" and .metadata.name == "agent-runway") | .rules[] | select(.resources[] == "secrets") | .verbs | join(",")' <<<"$delivery")
@@ -193,6 +193,45 @@ expect "one deployment runs per environment" '^deploy-\{\{workflow\.parameters\.
 expect "builds are not serialized" '^$' "$(line app-build mutexes)"
 expect "only deploy, remove, write and prune hold the deploy key, as delivery-git" '^app-deploy:deploy:delivery-git app-remove:remove:delivery-git resource-sync:write:delivery-git env-cleanup:prune:delivery-git$' "$(line all deploy-key)"
 expect "a changed declaration exits 3 for Agent Runway" 'exit 3' "$(cat charts/delivery/files/app-build.yaml)"
+expect "app-deploy-eb keeps app-deploy's step names" '^deploy verify$' "$(line app-deploy-eb tasks)"
+expect "app-deploy-eb takes app-deploy's parameters and the Target" '^deployment project environment image application host target$' "$(line app-deploy-eb parameters)"
+expect "app-deploy-eb returns url" '^url$' "$(line app-deploy-eb outputs)"
+expect "app-remove-eb keeps app-remove's step names" '^remove verify$' "$(line app-remove-eb tasks)"
+expect "app-remove-eb takes app-remove's parameters and the Target" '^deployment project environment target$' "$(line app-remove-eb parameters)"
+for name in app-deploy-eb app-remove-eb; do
+  expect "$name shares the environment mutex" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line $name mutexes)"
+done
+expect "VM Target steps act as delivery-target" '^app-deploy-eb:deploy app-deploy-eb:verify app-remove-eb:remove app-remove-eb:verify$' "$(line all delivery-target)"
+expect "app-deploy-eb refuses an image of another Project" 'is not an image of \$\{REGISTRY\}/\$\{PROJECT\} pinned by digest' "$(cat charts/delivery/files/app-deploy-eb.yaml)"
+if command -v cfn-lint >/dev/null; then
+  if cfn-lint charts/delivery/files/eb-stack.yaml; then pass "cfn-lint accepts the aws-eb stack"; else fail "cfn-lint accepts the aws-eb stack"; fi
+else
+  echo "skip cfn-lint (not installed)"
+fi
+
+# target.sh: the Target must be of the step's kind, name its fields and use an Agent Runway deploy role.
+target_json='{"kind":"aws-eb","name":"prod-eb","region":"ap-northeast-2","instanceSubnets":["subnet-a","subnet-b"],"deployRole":"arn:aws:iam::123456789012:role/agent-runway-target-deploy"}'
+target() { (PROJECT=todo ENVIRONMENT=prod TARGET_KIND=aws-eb TARGET=$1; set -eu; . charts/delivery/files/target.sh; shift; "$@"); }
+expect "target.sh joins a list field" '^subnet-a,subnet-b$' "$(target "$target_json" list instanceSubnets)"
+fails "target.sh refuses another kind" "is not of kind aws-eb" target '{"kind":"aws-eks"}' true
+fails "target.sh refuses a missing field" "Target field vpcId is missing" target "$target_json" require name vpcId
+fails "target.sh refuses another deploy role" "is not an Agent Runway Target deploy role" \
+  target "${target_json/agent-runway-target-deploy/admin}" assume_target test
+
+# eb-bundle.py: the bundle pins the image, keeps `$` literal and holds no secret value.
+bundle_dir=$(mktemp -d)
+printf '%s' '{"runtime":{"port":8080,"args":["--x=$HOME"]},"environment":{"env":{"LOG_LEVEL":"debug"}},"config":{"GREETING":"a $b"}}' > "$bundle_dir/app.json"
+eb_image="123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo@sha256:$(printf 'a%.0s' $(seq 64))"
+python3 -I charts/delivery/files/eb-bundle.py "$bundle_dir/app.json" "$eb_image" /agent-runway/prod-eb/todo/prod ap-northeast-2 "$bundle_dir/b.zip"
+compose=$(unzip -p "$bundle_dir/b.zip" docker-compose.yml)
+expect "the bundle runs the Release image by digest" "image: \"${eb_image}\"" "$compose"
+expect "the bundle maps port 80 to runtime.port" 'ports: \["80:8080"\]' "$compose"
+expect "the bundle keeps \$ literal for Compose" 'GREETING: "a \$\$b"' "$compose"
+expect "the hook reads only the environment's SSM path" '--path /agent-runway/prod-eb/todo/prod ' "$(unzip -p "$bundle_dir/b.zip" .platform/hooks/prebuild/01-runway.sh)"
+expect "the hook is executable" '-rwx' "$(unzip -Z "$bundle_dir/b.zip" .platform/hooks/prebuild/01-runway.sh)"
+fails "the bundle refuses an image outside ECR" "pinned by digest" \
+  python3 -I charts/delivery/files/eb-bundle.py "$bundle_dir/app.json" docker.io/library/nginx:latest /agent-runway/prod-eb/todo/prod ap-northeast-2 "$bundle_dir/c.zip"
+rm -rf "$bundle_dir"
 expect "deploy refuses an image of another Project" 'is not an image of \$\{REGISTRY\}/\$\{PROJECT\} pinned by digest' "$(cat charts/delivery/files/app-deploy.yaml)"
 
 # resource-sync writes only allowed kro instances of the environment's namespace.
@@ -338,7 +377,7 @@ fails "a manifest that is not YAML is refused" "" check <<<"kind: [unclosed"
 
 if command -v argo >/dev/null; then
   # One run: resource-sync and app-remove reference env-cleanup templates.
-  if argo lint --offline charts/delivery/files/{app-build,app-deploy,app-remove,resource-sync,env-cleanup}.yaml >/dev/null; then
+  if argo lint --offline charts/delivery/files/{app-build,app-deploy,app-remove,app-deploy-eb,app-remove-eb,resource-sync,env-cleanup}.yaml >/dev/null; then
     pass "argo lint accepts the WorkflowTemplates"; else fail "argo lint accepts the WorkflowTemplates"; fi
 else
   echo "skip argo lint (argo CLI not installed)"

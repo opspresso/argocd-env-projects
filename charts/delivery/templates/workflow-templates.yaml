@@ -1,5 +1,5 @@
 {{- /* Static: Argo's own {{ }} parameters must not pass through Helm. Cluster values come from delivery-settings. */}}
-{{- range list "app-build" "app-deploy" "app-remove" "resource-sync" "env-cleanup" }}
+{{- range list "app-build" "app-deploy" "app-remove" "app-deploy-eb" "app-remove-eb" "resource-sync" "env-cleanup" }}
 ---
 {{ $.Files.Get (printf "files/%s.yaml" .) }}
 {{- end }}
