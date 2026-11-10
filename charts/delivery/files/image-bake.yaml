@@ -35,6 +35,9 @@ spec:
     - name: build
       serviceAccountName: delivery-target
       activeDeadlineSeconds: 3300
+      # The session-manager-plugin the init container installs is the arm64 build.
+      nodeSelector:
+        kubernetes.io/arch: arm64
       # Assumes the bake role and leaves the session for the packer container in the Pod's scratch volume.
       initContainers:
         - name: session
@@ -59,6 +62,31 @@ spec:
                 echo "export PKR_VAR_subnet_id='$(field bakeSubnet)' PKR_VAR_image_id='${IMAGE}'"
               } > /work/session.sh
               cp /etc/delivery-scripts/vm-node.pkr.hcl /etc/delivery-scripts/runway-app.py /work/
+              # packer reaches the build instance through Session Manager, which needs session-manager-plugin. The
+              # arm64 build is statically linked, so it runs in the Alpine packer image (the Pod runs on arm64).
+              curl -fsSL -o /tmp/plugin.deb "https://s3.amazonaws.com/session-manager-downloads/plugin/${PLUGIN_VERSION}/ubuntu_arm64/session-manager-plugin.deb"
+              echo "${PLUGIN_SHA256}  /tmp/plugin.deb" | sha256sum -c -
+              mkdir -p /work/bin
+              python3 - /tmp/plugin.deb /work/bin/session-manager-plugin <<'PY'
+              import io, sys, tarfile
+              deb, out = sys.argv[1], sys.argv[2]
+              data = open(deb, "rb").read()
+              if data[:8] != b"!<arch>\n": sys.exit("not a Debian package")
+              pos = 8
+              while pos + 60 <= len(data):
+                  name = data[pos:pos + 16].decode().strip().rstrip("/")
+                  size = int(data[pos + 48:pos + 58].decode().strip())
+                  body = data[pos + 60:pos + 60 + size]
+                  pos += 60 + size + (size & 1)
+                  if not name.startswith("data.tar"): continue
+                  with tarfile.open(fileobj=io.BytesIO(body)) as tar:
+                      member = next(m for m in tar.getmembers() if m.isfile() and m.name.lstrip("./") == "usr/local/sessionmanagerplugin/bin/session-manager-plugin")
+                      with open(out, "wb") as target: target.write(tar.extractfile(member).read())
+                  sys.exit(0)
+              sys.exit("no data archive in the package")
+              PY
+              chmod 0755 /work/bin/session-manager-plugin
+              rm -f /tmp/plugin.deb
           env: &env
             - {name: IMAGE, value: "{{workflow.parameters.image}}"}
             - {name: NAME, value: "{{workflow.parameters.name}}"}
@@ -66,6 +94,8 @@ spec:
             - {name: TARGET, value: "{{workflow.parameters.target}}"}
             - {name: TARGET_KIND, value: aws-asg}
             - {name: HOME, value: /tmp}
+            - {name: PLUGIN_VERSION, value: 1.2.896.0}
+            - {name: PLUGIN_SHA256, value: 914eeca87b18b55356c58be197080f73742b3ca60d3823f0a45670dc9056aa9c}
           securityContext: &unprivileged
             runAsUser: 1000
             runAsGroup: 1000
@@ -89,7 +119,7 @@ spec:
             rm -f session.sh
             # Unset the Pod Identity variables so packer uses only the bake session.
             unset AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE
-            export PACKER_PLUGIN_PATH=/work/.plugins
+            export PACKER_PLUGIN_PATH=/work/.plugins PATH="/work/bin:${PATH}"
             packer init vm-node.pkr.hcl
             packer build -color=false vm-node.pkr.hcl
             ami=$(sed -n 's/.*"artifact_id": *"[^:"]*:\(ami-[0-9a-f]*\)".*/\1/p' manifest.json | tail -n 1)
