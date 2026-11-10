@@ -44,6 +44,10 @@ spec:
         resources:
           requests:
             storage: 10Gi
+  # Every eks-demo node is Spot. A step whose Pod a Spot reclaim stops (the Pod is deleted, or its container ends on
+  # SIGTERM with exit code 143) runs again (retryStrategy &reclaimed) on another node in the work volume's AZ; every step
+  # is safe to repeat. A step's own failure (any other exit code, or its deadline) is not retried. Agent Runway counts
+  # only the latest attempt of a step.
   templates:
     - name: release
       # One Pod at a time: every step mounts the same ReadWriteOnce work volume.
@@ -104,6 +108,11 @@ spec:
     - name: checkout
       serviceAccountName: delivery-git
       activeDeadlineSeconds: 300
+      retryStrategy: &reclaimed
+        limit: 2
+        retryPolicy: Always
+        expression: lastRetry.status == "Error" || lastRetry.exitCode == "143"
+        backoff: {duration: 10s}
       container:
         image: alpine/k8s:1.37.1
         command: [sh, -euc]
@@ -151,6 +160,7 @@ spec:
     # The file at this revision must be the one Agent Runway validated, or the deployed settings would differ from it.
     - name: check-application
       activeDeadlineSeconds: 120
+      retryStrategy: *reclaimed
       # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
       automountServiceAccountToken: false
       executor:
@@ -196,6 +206,7 @@ spec:
     # Runs the app's own test command. The Pod has no credential and reaches only DNS and the public internet.
     - name: test
       activeDeadlineSeconds: 1800
+      retryStrategy: *reclaimed
       inputs:
         parameters:
           - name: image
@@ -228,6 +239,7 @@ spec:
     - name: registry
       serviceAccountName: delivery-registry
       activeDeadlineSeconds: 300
+      retryStrategy: *reclaimed
       inputs:
         parameters:
           - name: revision
@@ -335,6 +347,7 @@ spec:
     # Pods tolerate.
     - name: build
       activeDeadlineSeconds: 2400
+      retryStrategy: *reclaimed
       inputs:
         parameters:
           - name: platform
@@ -361,8 +374,9 @@ spec:
             context="/work/src/$(cat /work/context)"
             dockerfile="$context/$(cat /work/dockerfile)"
             image="${REGISTRY}/${PROJECT}:${TAG}"
-            # The manifest step still needs the push credential after a platform image.
-            if [ "$FINAL" = true ]; then trap 'rm -f /work/.docker/config.json' EXIT; fi
+            # The manifest step still needs the push credential after a platform image. A step ended by a signal (a Spot
+            # reclaim, exit code 143) keeps it for its retry.
+            if [ "$FINAL" = true ]; then trap '[ $? -ge 128 ] || rm -f /work/.docker/config.json' EXIT; fi
             /kaniko/executor --context "dir://$context" --dockerfile "$dockerfile" --custom-platform "${PLATFORM}" \
               --destination "$image" --digest-file "/work/digest-${ARCH}" --snapshot-mode redo
             digest=$(cat "/work/digest-${ARCH}")
@@ -399,6 +413,7 @@ spec:
     # Joins the platform images in one manifest list under the Release tag; the Release image is the list's digest.
     - name: manifest
       activeDeadlineSeconds: 300
+      retryStrategy: *reclaimed
       inputs:
         parameters:
           - name: archs
@@ -415,7 +430,8 @@ spec:
         command: [/busybox/sh, -euc]
         args:
           - |
-            trap 'rm -f /work/.docker/config.json' EXIT
+            # A step ended by a signal (a Spot reclaim, exit code 143) keeps the push credential for its retry.
+            trap '[ $? -ge 128 ] || rm -f /work/.docker/config.json' EXIT
             set --
             for arch in $ARCHS; do set -- "$@" --manifest "${REGISTRY}/${PROJECT}@$(cat "/work/digest-${arch}")"; done
             image="${REGISTRY}/${PROJECT}:${TAG}"

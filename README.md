@@ -72,6 +72,8 @@ flowchart LR
 | `env-cleanup` | `live` | `delivery-verify` | namespace에 kro 인스턴스(`RESOURCE_KINDS`)·StatefulSet·PVC가 남았는지 확인한다(삭제 중인 객체 포함). 남아 있으면 `not empty yet`을 기록하고 성공한다. API 오류만 실패한다 |
 | `env-cleanup` | `prune` | `delivery-git` | `live`가 남은 객체가 없다고 할 때만 실행한다. `commit.sh PRUNE_EMPTY`로 디렉터리가 여전히 비었으면 지우고, 아니면 `not empty`를 출력하고 아무것도 바꾸지 않는다 |
 
+eks-demo 노드는 모두 Spot입니다. `app-build`의 각 단계는 Spot 회수로 Pod가 지워지거나 SIGTERM(exit code 143)으로 끝나면 같은 작업 volume으로 최대 2번 다시 실행합니다. 단계 자체의 실패(다른 exit code, 단계 deadline)는 다시 실행하지 않습니다. 회수로 끝난 `build`·`manifest`는 다음 시도를 위해 push credential을 남깁니다.
+
 `resource-sync`는 `resources-<slug>-<env>`, `app-deploy`와 `app-remove`는 같은 `deploy-<slug>-<env>` mutex를 잡습니다.
 환경 디렉터리는 commit 두 번으로 지웁니다. 마지막 `app.yaml`이나 리소스를 지우는 commit은 디렉터리에 빈 `resources.yaml`을 남깁니다. 그래서 Application이 남아 있는 동안 Argo CD가 workload와 리소스를 정리합니다. namespace에 리소스 객체(kro 인스턴스·StatefulSet·PVC)가 남지 않았으면 `cleanup` 단계가 디렉터리를 지우는 두 번째 commit을 만듭니다. ApplicationSet이 빈 Application을 삭제하고, Argo CD가 남은 테넌트 객체를 정리합니다. 객체가 남은 `S3Bucket`처럼 아직 삭제 중인 객체가 있거나 그 사이에 `app.yaml`·리소스가 다시 생기면 디렉터리는 빈 선언으로 남습니다. Workflow는 성공합니다. CronWorkflow `env-cleanup`이 15분마다 `scan`으로 빈 선언 디렉터리를 찾고, 환경마다 `deploy-<slug>-<env>` mutex 안에서 `live`·`prune`을 다시 실행합니다. 지울 디렉터리가 없으면 commit하지 않습니다. Argo CD가 만든 namespace는 남습니다. 같은 환경의 다음 Workflow는 앞 Workflow가 끝날 때까지 `Pending`으로 기다리고, 다른 환경과 `app-build`는 기다리지 않습니다.
 
