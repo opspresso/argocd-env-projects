@@ -38,7 +38,7 @@ render() {
   jq -n --argjson application "$1" --arg deployment 11111111-1111-4111-8111-111111111111 \
     --arg image "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo@sha256:$2" -f charts/delivery/files/render.jq | yq -p json -o yaml
 }
-DEV_APP='{"runtime":{"port":8080,"health":"/health","build":{"context":".","dockerfile":"Dockerfile"}},"environment":{"replicas":1,"maxReplicas":1,"cpu":"100m","memory":"256Mi","resources":[],"secrets":[],"env":{"LOG_LEVEL":"debug"}}}'
+DEV_APP='{"runtime":{"port":8080,"health":"/health","build":{"context":".","dockerfile":"Dockerfile"}},"environment":{"replicas":1,"maxReplicas":1,"cpu":"100m","memory":"256Mi","resources":[],"secrets":[],"env":{"LOG_LEVEL":"debug"}},"config":{"PGHOST":"db.app-todo-dev.svc.cluster.local","PGPORT":"5432"}}'
 PROD_APP='{"runtime":{"port":3000,"health":"/healthz","build":{"context":".","dockerfile":"Dockerfile"},"command":["node"],"args":["server.js"]},"environment":{"replicas":2,"maxReplicas":4,"cpu":"250m","memory":"512Mi","resources":[],"secrets":[],"env":{}}}'
 if diff -q <(render "$DEV_APP" "$(printf 'a%.0s' $(seq 64))") tests/app/dev.yaml >/dev/null \
   && diff -q <(render "$PROD_APP" "$(printf 'b%.0s' $(seq 64))") tests/app/prod.yaml >/dev/null; then
@@ -49,7 +49,11 @@ expect "dev host is <slug>-dev.<domain>" '"todo-dev.apps.rovr.dev"' "$dev"
 expect "image is pinned by digest" 'projects/todo@sha256:a{64}' "$dev"
 expect "PORT follows runtime.port" 'value: "8080"' "$dev"
 expect "plain env is set" 'name: LOG_LEVEL' "$dev"
-expect "Variables come from app-env" 'name: "?app-env"?$' "$dev"
+expect "secret Variables come from app-env" 'name: "?app-env"?$' "$dev"
+expect "Variables that are not secret are a ConfigMap" 'kind: ConfigMap$' "$dev"
+expect "the ConfigMap holds the plain Variables" 'PGHOST: "?db.app-todo-dev.svc.cluster.local"?' "$dev"
+expect "the Pods read the ConfigMap" 'configMapRef:' "$dev"
+expect "a changed plain Variable restarts the Pods" 'checksum/config:' "$dev"
 expect "an app without Variables still starts" 'optional: true' "$dev"
 expect "the app runs as ServiceAccount app" 'serviceAccountName: "?app"?' "$dev"
 expect "the Pod gets no API token" 'automountServiceAccountToken: false' "$dev"
@@ -76,6 +80,7 @@ refuse "one replica has no PDB" 'kind: PodDisruptionBudget' "$dev"
 
 prod=$(app todo prod tests/app/prod.yaml -f tests/app/override.yaml)
 expect "prod host is <slug>.<domain>" '"todo.apps.rovr.dev"' "$prod"
+refuse "an environment without plain Variables has no ConfigMap" 'kind: ConfigMap$' "$prod"
 refuse "a values file cannot claim another domain" 'agrt.dev' "$prod"
 refuse "a values file cannot move the namespace" 'namespace: app-other' "$prod"
 refuse "a values file cannot rename the environment" '/agent-runway/eks-demo/[a-z-]+/dev' "$prod"

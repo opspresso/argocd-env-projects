@@ -1,8 +1,11 @@
 # Renders projects/<project>/<environment>/app.yaml for charts/app (the opspresso app chart) from Agent Runway's
-# normalized declaration. Inputs: $application (JSON {runtime, environment}), $deployment, $image (pinned by digest).
+# normalized declaration. Inputs: $application (JSON {runtime, environment, config}), $deployment, $image (pinned by digest).
+# `config` is the environment's Variables that are not secret, as Agent Runway holds them when it submits the Deployment;
+# they reach the Pods through the chart's ConfigMap. Secret Variables reach them through ExternalSecret app-env.
 ($application.runtime) as $r
 | ($application.environment) as $e
 | ($e.maxReplicas // $e.replicas) as $max
+| ($application.config // {}) as $config
 | { path: $r.health, port: "http" } as $probe
 | {
     deployment: $deployment,
@@ -27,6 +30,8 @@
         # Each Deployment refreshes app-env before the rollout (ExternalSecret sync-wave -1) and restarts the Pods,
         # so they read Variables created moments before, and verify can find this rollout.
         externalSecrets: { annotations: { "force-sync": $deployment } },
+        # A changed value changes the chart's config checksum, so the Pods restart with it.
+        configmap: (if ($config | length) > 0 then { enabled: true, data: ($config | with_entries(.value |= tostring)) } else { enabled: false } end),
         podAnnotations: { "opspresso.com/deployment": $deployment }
       }
       + (if $r.command then { command: $r.command } else {} end)
