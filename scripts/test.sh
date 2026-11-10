@@ -169,7 +169,7 @@ expect "Agent Runway reads every platform kro kind" 'resources: \[rdspostgres, s
 
 contract=$(python3 scripts/workflow_contract.py)
 line() { grep -E "^$1 $2( |$)" <<<"$contract" | cut -d' ' -f3-; }
-expect "app-build keeps the step names Agent Runway maps" '^checkout check-application test registry build manifest$' "$(line app-build tasks)"
+expect "app-build keeps the step names Agent Runway maps" '^checkout check-application test registry build manifest result$' "$(line app-build tasks)"
 expect "app-build takes Agent Runway's parameters" '^release project repository ref applicationSha256 runtime platforms$' "$(line app-build parameters)"
 build_yaml=$(cat charts/delivery/files/app-build.yaml)
 expect "app-build builds arm64 alone by default" "value: '\\[\"linux/arm64\"\\]'" "$build_yaml"
