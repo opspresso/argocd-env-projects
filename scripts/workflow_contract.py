@@ -2,11 +2,25 @@
 
 Lines: "<template> tasks|parameters|outputs <names>" and "all deploy-key <template>:<step>:<ServiceAccount> ...".
 """
+import re
+
 import yaml
 
 ENTRYPOINTS = {"app-build": "release", "app-deploy": "deployment", "app-remove": "removal",
                "app-deploy-eb": "deployment", "app-remove-eb": "removal", "app-deploy-asg": "deployment",
                "app-remove-asg": "removal", "image-bake": "bake", "resource-sync": "sync", "env-cleanup": "sweep"}
+
+
+def unassigned_variables(script):
+    """Lower-case shell variables a step script reads without assigning them; `sh -u` stops the step on the first one."""
+    script = re.sub(r"^\s*#.*$", "", script, flags=re.M)  # comments
+    script = re.sub(r"<<'(\w+)'\n.*?\n\s*\1\n", "\n", script, flags=re.S)  # quoted heredocs (python, JSON)
+    script = re.sub(r"'[^']*'", "''", script)  # single-quoted text (jq and awk programs)
+    used = set(re.findall(r"\$\{?([a-z_][a-z0-9_]*)", script))
+    assigned = set(re.findall(r"(?:^|[\s;(&|])(?:local\s+|export\s+)?([a-z_][a-z0-9_]*)=", script, re.M))
+    assigned |= set(re.findall(r"\bfor\s+([a-z_][a-z0-9_]*)\s+in\b", script))
+    assigned |= {name for names in re.findall(r"\bread\s+(?:-\w+\s+)*([a-z_ ][a-z0-9_ ]*)", script) for name in names.split()}
+    return sorted(used - assigned)
 
 
 def load(name):
@@ -31,6 +45,11 @@ for name, entry in ENTRYPOINTS.items():
     else:
         assert spec["podGC"]["strategy"] == "OnWorkflowSuccess", name
     steps = {t["name"]: t for t in spec["templates"]}
+    for step in spec["templates"]:
+        for container in [step.get("container")] + step.get("initContainers", []):
+            if container and container.get("args"):
+                missing = unassigned_variables(container["args"][0])
+                assert not missing, f"{name}:{step['name']} reads unassigned variables {missing}"
     print(name, "tasks", " ".join(task["name"] for task in steps[entry]["dag"]["tasks"]))
     print(name, "parameters", " ".join(p["name"] for p in spec.get("arguments", {}).get("parameters", [])))
     outputs = sorted(

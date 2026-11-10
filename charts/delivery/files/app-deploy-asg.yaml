@@ -148,7 +148,7 @@ spec:
               echo "Stack $stack does not run Deployment ${DEPLOYMENT}: $state"; exit 1
             fi
             url="https://${HOST}"
-            echo "Environment $environment runs Deployment ${DEPLOYMENT}. Checking ${url}${health}"
+            echo "Stack $stack runs Deployment ${DEPLOYMENT}. Checking ${url}${health}"
             deadline=$(( $(date +%s) + 300 ))
             until curl -fsS -o /dev/null --max-time 10 "${url}${health}"; do
               if [ "$(date +%s)" -ge "$deadline" ]; then echo "${url}${health} did not answer with 2xx in 5 minutes"; exit 1; fi
