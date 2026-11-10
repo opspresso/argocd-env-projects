@@ -35,6 +35,10 @@ spec:
     - name: build
       serviceAccountName: delivery-target
       activeDeadlineSeconds: 3300
+      # Karpenter does not move the Pod to consolidate nodes while the step runs.
+      metadata:
+        annotations:
+          karpenter.sh/do-not-disrupt: "true"
       # The session-manager-plugin the init container installs is the arm64 build.
       nodeSelector:
         kubernetes.io/arch: arm64

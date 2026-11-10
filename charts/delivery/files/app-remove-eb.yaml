@@ -37,6 +37,16 @@ spec:
     - name: remove
       serviceAccountName: delivery-target
       activeDeadlineSeconds: 2700
+      # A Pod lost with its node (a Spot reclaim) or ended by a signal runs again; every step is safe to repeat.
+      retryStrategy:
+        limit: 2
+        retryPolicy: Always
+        backoff: {duration: 10s}
+        expression: lastRetry.status == "Error" || lastRetry.exitCode == "143"
+      # Karpenter does not move the Pod to consolidate nodes while the step runs.
+      metadata:
+        annotations:
+          karpenter.sh/do-not-disrupt: "true"
       container:
         image: alpine/k8s:1.37.1
         command: [sh, -euc]
@@ -85,6 +95,16 @@ spec:
     - name: verify
       serviceAccountName: delivery-target
       activeDeadlineSeconds: 300
+      # A Pod lost with its node (a Spot reclaim) or ended by a signal runs again; every step is safe to repeat.
+      retryStrategy:
+        limit: 2
+        retryPolicy: Always
+        backoff: {duration: 10s}
+        expression: lastRetry.status == "Error" || lastRetry.exitCode == "143"
+      # Karpenter does not move the Pod to consolidate nodes while the step runs.
+      metadata:
+        annotations:
+          karpenter.sh/do-not-disrupt: "true"
       container:
         image: alpine/k8s:1.37.1
         command: [sh, -euc]

@@ -46,6 +46,13 @@ for name, entry in ENTRYPOINTS.items():
         assert spec["podGC"]["strategy"] == "OnWorkflowSuccess", name
     steps = {t["name"]: t for t in spec["templates"]}
     for step in spec["templates"]:
+        if step.get("serviceAccountName") == "delivery-target":
+            # Target steps run for minutes on nodes that can go away: Karpenter must not consolidate them, and the
+            # repeatable ones (all but the packer build, which would leave its instance behind) retry a lost Pod.
+            assert step.get("metadata", {}).get("annotations", {}).get("karpenter.sh/do-not-disrupt") == "true", f"{name}:{step['name']}"
+            if name != "image-bake":
+                assert 'lastRetry.status == "Error"' in step.get("retryStrategy", {}).get("expression", ""), f"{name}:{step['name']}"
+    for step in spec["templates"]:
         for container in [step.get("container")] + step.get("initContainers", []):
             if container and container.get("args"):
                 missing = unassigned_variables(container["args"][0])
