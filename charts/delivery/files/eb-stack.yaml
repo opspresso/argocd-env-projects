@@ -66,9 +66,12 @@ Parameters:
 
 Resources:
   # The instances read only this environment's Variables and pull only this Project's images.
+  # Named <stack>-app so the Target deploy role, which may change only roles and instance profiles named
+  # runway-<project>-<environment>-*, can manage them; generated names cut long stack names.
   InstanceRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub ${AWS::StackName}-app
       PermissionsBoundary: !Ref PermissionsBoundaryArn
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -105,6 +108,7 @@ Resources:
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
+      InstanceProfileName: !Sub ${AWS::StackName}-app
       Roles: [!Ref InstanceRole]
 
   Application:

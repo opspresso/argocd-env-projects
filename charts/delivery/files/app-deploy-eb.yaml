@@ -81,7 +81,7 @@ spec:
             aws s3 cp --only-show-errors /tmp/bundle.zip "s3://$(field artifactBucket)/${key}"
             echo "Updating stack ${stack} to Deployment ${DEPLOYMENT} (${IMAGE})"
             aws cloudformation deploy --stack-name "$stack" --template-file /etc/delivery-scripts/eb-stack.yaml \
-              --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset \
+              --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset \
               --tags "opspresso.com/delivery-project=${PROJECT}" "opspresso.com/delivery-env=${ENVIRONMENT}" \
               --parameter-overrides \
                 "Project=${PROJECT}" "Environment=${ENVIRONMENT}" "DeploymentId=${DEPLOYMENT}" \
