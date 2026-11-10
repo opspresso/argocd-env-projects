@@ -29,6 +29,10 @@ spec:
       - name: applicationSha256
       # The runtime section of the applied declaration, with defaults filled in (JSON).
       - name: runtime
+      # The image platforms (JSON list of linux/amd64 and linux/arm64). One platform builds one image; more build one
+      # image per platform on a node of that architecture and join them in one manifest list. No emulation (QEMU).
+      - name: platforms
+        value: '["linux/arm64"]'
   # The work volume is scratch space. gp3-ephemeral deletes the EBS volume with its claim; the default gp3 class
   # retains it and leaks one volume per Release.
   volumeClaimTemplates:
@@ -42,6 +46,8 @@ spec:
             storage: 10Gi
   templates:
     - name: release
+      # One Pod at a time: every step mounts the same ReadWriteOnce work volume.
+      parallelism: 1
       dag:
         tasks:
           - name: checkout
@@ -68,10 +74,28 @@ spec:
             template: build
             depends: registry
             when: "'{{tasks.registry.outputs.parameters.digest}}' == ''"
+            withParam: "{{tasks.registry.outputs.parameters.builds}}"
             arguments:
               parameters:
-                - name: revision
-                  value: "{{tasks.checkout.outputs.parameters.revision}}"
+                - name: platform
+                  value: "{{item.platform}}"
+                - name: arch
+                  value: "{{item.arch}}"
+                - name: tag
+                  value: "{{item.tag}}"
+                - name: final
+                  value: "{{item.final}}"
+          # More than one platform: joins the per-platform images in one manifest list under the Release tag.
+          - name: manifest
+            template: manifest
+            depends: "registry && (build.Succeeded || build.Skipped)"
+            when: "'{{tasks.registry.outputs.parameters.digest}}' == '' && '{{tasks.registry.outputs.parameters.archs}}' =~ ' '"
+            arguments:
+              parameters:
+                - name: archs
+                  value: "{{tasks.registry.outputs.parameters.archs}}"
+                - name: tag
+                  value: "{{tasks.registry.outputs.parameters.tag}}"
 
     # Clones the requested ref and records the commit it resolves to. Agent Runway writes Secret <workflow>-checkout
     # before this step runs: an empty token clones a public repository; a token (GitHub App, contents:read on this one
@@ -220,16 +244,47 @@ spec:
             fi
             aws ecr put-lifecycle-policy --repository-name "$repository" --lifecycle-policy-text \
               '{"rules":[{"rulePriority":1,"description":"Keep the newest 50 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":50},"action":{"type":"expire"}}]}' >/dev/null
-            digest=$(aws ecr describe-images --repository-name "$repository" --image-ids "imageTag=${REVISION}" \
-              --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)
+            existing() {
+              aws ecr describe-images --repository-name "$repository" --image-ids "imageTag=$1" \
+                --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true
+            }
+            # The Release tag names the commit and the architectures, so a build for other platforms never meets an
+            # immutable tag of the same commit. arm64 alone keeps the bare commit tag of the images built before.
+            archs=$(printf '%s' "$PLATFORMS" | jq -r '
+              if type == "array" and length > 0 and all(.[]; . == "linux/amd64" or . == "linux/arm64")
+              then map(ltrimstr("linux/")) | unique | join(" ") else error("platforms must list linux/amd64 or linux/arm64") end')
+            key=$(printf '%s' "$archs" | tr ' ' '-')
+            if [ "$key" = arm64 ]; then tag="$REVISION"; else tag="${REVISION}-${key}"; fi
+            printf '%s' "$archs" > /work/archs
+            printf '%s' "$tag" > /work/tag
+            digest=$(existing "$tag")
             case "$digest" in sha256:*)
-              echo "Reusing the image of ${REVISION}: $digest"
+              echo "Reusing the image of ${tag}: $digest"
               printf '%s' "$digest" > /work/digest
               printf '%s/%s@%s' "$REGISTRY" "$PROJECT" "$digest" > /work/image
+              echo '[]' > /work/builds
               exit 0;;
             esac
             : > /work/digest
             : > /work/image
+            # One platform pushes the Release tag itself. More push one image per platform (<commit>-build-<arch>) and
+            # the manifest step tags their list; a platform image left by an earlier attempt is reused.
+            builds='[]'
+            for arch in $archs; do
+              if [ "$arch" = "$archs" ]; then
+                builds=$(printf '%s' "$builds" | jq -c --arg arch "$arch" --arg tag "$tag" '. + [{platform: "linux/\($arch)", arch: $arch, tag: $tag, final: "true"}]')
+                continue
+              fi
+              part="${REVISION}-build-${arch}"
+              digest=$(existing "$part")
+              case "$digest" in sha256:*)
+                echo "Reusing the ${arch} image of ${REVISION}: $digest"
+                printf '%s' "$digest" > "/work/digest-${arch}"
+                continue;;
+              esac
+              builds=$(printf '%s' "$builds" | jq -c --arg arch "$arch" --arg tag "$part" '. + [{platform: "linux/\($arch)", arch: $arch, tag: $tag, final: "false"}]')
+            done
+            printf '%s' "$builds" > /work/builds
             session=$(aws sts assume-role --role-arn "$PUSH_ROLE_ARN" --role-session-name "release-${RELEASE}" \
               --tags "Key=delivery-project,Value=${PROJECT}" --duration-seconds 3600 --output json)
             export AWS_ACCESS_KEY_ID=$(printf '%s' "$session" | jq -r .Credentials.AccessKeyId)
@@ -244,6 +299,7 @@ spec:
           - {name: PROJECT, value: "{{workflow.parameters.project}}"}
           - {name: RELEASE, value: "{{workflow.parameters.release}}"}
           - {name: REVISION, value: "{{inputs.parameters.revision}}"}
+          - {name: PLATFORMS, value: "{{workflow.parameters.platforms}}"}
           - {name: HOME, value: /tmp}
         envFrom:
           - configMapRef:
@@ -257,20 +313,35 @@ spec:
           - name: digest
             valueFrom:
               path: /work/digest
+          - name: archs
+            valueFrom:
+              path: /work/archs
+          - name: tag
+            valueFrom:
+              path: /work/tag
+          - name: builds
+            valueFrom:
+              path: /work/builds
           # Set only when the image is reused; otherwise the build task sets it.
           - name: image
             globalName: image
             valueFrom:
               path: /work/image
 
-    # Builds the Dockerfile with kaniko for the cluster's architecture and pushes it. kaniko needs no user namespace
-    # or privilege (eks-demo runs Bottlerocket on EKS Auto Mode, where user namespaces are off). It runs the
-    # Dockerfile as root inside this Pod, which holds only the push credential of this Project's repository.
+    # Builds the Dockerfile with kaniko for one platform on a node of that architecture and pushes it. kaniko needs no
+    # user namespace or privilege (eks-demo runs Bottlerocket on EKS Auto Mode, where user namespaces are off). It runs
+    # the Dockerfile as root inside this Pod, which holds only the push credential of this Project's repository.
+    # amd64 nodes come from NodePool delivery-amd64 (terraform-env-demo demo/6-eks-node), whose taint only these
+    # Pods tolerate.
     - name: build
       activeDeadlineSeconds: 2400
       inputs:
         parameters:
-          - name: revision
+          - name: platform
+          - name: arch
+          - name: tag
+          # "true" when this image is the Release image; "false" for one platform of a manifest list.
+          - name: final
       # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
       automountServiceAccountToken: false
       executor:
@@ -278,6 +349,10 @@ spec:
       metadata:
         labels:
           opspresso.com/delivery-role: runner
+      nodeSelector:
+        kubernetes.io/arch: "{{inputs.parameters.arch}}"
+      tolerations:
+        - {key: opspresso.com/delivery-build, operator: Equal, value: "true", effect: NoSchedule}
       container:
         image: ghcr.io/osscontainertools/kaniko:v1.29.0-debug
         command: [/busybox/sh, -euc]
@@ -285,15 +360,23 @@ spec:
           - |
             context="/work/src/$(cat /work/context)"
             dockerfile="$context/$(cat /work/dockerfile)"
-            image="${REGISTRY}/${PROJECT}:${REVISION}"
-            trap 'rm -f /work/.docker/config.json' EXIT
+            image="${REGISTRY}/${PROJECT}:${TAG}"
+            # The manifest step still needs the push credential after a platform image.
+            if [ "$FINAL" = true ]; then trap 'rm -f /work/.docker/config.json' EXIT; fi
             /kaniko/executor --context "dir://$context" --dockerfile "$dockerfile" --custom-platform "${PLATFORM}" \
-              --destination "$image" --digest-file /work/digest --snapshot-mode redo
-            printf '%s/%s@%s' "$REGISTRY" "$PROJECT" "$(cat /work/digest)" > /work/image
-            echo "Pushed ${image}@$(cat /work/digest)"
+              --destination "$image" --digest-file "/work/digest-${ARCH}" --snapshot-mode redo
+            digest=$(cat "/work/digest-${ARCH}")
+            if [ "$FINAL" = true ]; then
+              printf '%s' "$digest" > /work/digest
+              printf '%s/%s@%s' "$REGISTRY" "$PROJECT" "$digest" > /work/image
+            fi
+            echo "Pushed ${image}@${digest} (${PLATFORM})"
         env:
           - {name: PROJECT, value: "{{workflow.parameters.project}}"}
-          - {name: REVISION, value: "{{inputs.parameters.revision}}"}
+          - {name: PLATFORM, value: "{{inputs.parameters.platform}}"}
+          - {name: ARCH, value: "{{inputs.parameters.arch}}"}
+          - {name: TAG, value: "{{inputs.parameters.tag}}"}
+          - {name: FINAL, value: "{{inputs.parameters.final}}"}
           - {name: DOCKER_CONFIG, value: /work/.docker}
         envFrom:
           - configMapRef:
@@ -308,9 +391,54 @@ spec:
           - {name: work, mountPath: /work}
       outputs:
         parameters:
-          - name: digest
+          - name: image
+            globalName: image
             valueFrom:
-              path: /work/digest
+              path: /work/image
+
+    # Joins the platform images in one manifest list under the Release tag; the Release image is the list's digest.
+    - name: manifest
+      activeDeadlineSeconds: 300
+      inputs:
+        parameters:
+          - name: archs
+          - name: tag
+      # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
+      automountServiceAccountToken: false
+      executor:
+        serviceAccountName: delivery-runner
+      metadata:
+        labels:
+          opspresso.com/delivery-role: runner
+      container:
+        image: gcr.io/go-containerregistry/crane/debug:v0.22.1
+        command: [/busybox/sh, -euc]
+        args:
+          - |
+            trap 'rm -f /work/.docker/config.json' EXIT
+            set --
+            for arch in $ARCHS; do set -- "$@" --manifest "${REGISTRY}/${PROJECT}@$(cat "/work/digest-${arch}")"; done
+            image="${REGISTRY}/${PROJECT}:${TAG}"
+            crane index append --docker-empty-base "$@" --tag "$image"
+            digest=$(crane digest "$image")
+            printf '%s' "$digest" > /work/digest
+            printf '%s/%s@%s' "$REGISTRY" "$PROJECT" "$digest" > /work/image
+            echo "Pushed ${image}@${digest} (${ARCHS})"
+        env:
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: ARCHS, value: "{{inputs.parameters.archs}}"}
+          - {name: TAG, value: "{{inputs.parameters.tag}}"}
+          - {name: DOCKER_CONFIG, value: /work/.docker}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: *unprivileged
+        resources: *small
+        volumeMounts:
+          - {name: work, mountPath: /work}
+      outputs:
+        parameters:
           - name: image
             globalName: image
             valueFrom:

@@ -7,7 +7,6 @@ data:
   PUSH_ROLE_ARN: {{ required "pushRoleArn is required" .Values.pushRoleArn | quote }}
   AWS_REGION: {{ .Values.region | quote }}
   AWS_DEFAULT_REGION: {{ .Values.region | quote }}
-  PLATFORM: {{ .Values.platform | quote }}
   GITOPS_REPOSITORY: {{ .Values.gitops.repository | quote }}
   GITOPS_BRANCH: {{ .Values.gitops.branch | quote }}
   GIT_AUTHOR_NAME: {{ .Values.gitops.authorName | quote }}
