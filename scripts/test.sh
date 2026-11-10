@@ -169,8 +169,13 @@ expect "Agent Runway reads every platform kro kind" 'resources: \[rdspostgres, s
 
 contract=$(python3 scripts/workflow_contract.py)
 line() { grep -E "^$1 $2( |$)" <<<"$contract" | cut -d' ' -f3-; }
-expect "app-build keeps the step names Agent Runway maps" '^checkout check-application test registry build$' "$(line app-build tasks)"
-expect "app-build takes Agent Runway's parameters" '^release project repository ref applicationSha256 runtime$' "$(line app-build parameters)"
+expect "app-build keeps the step names Agent Runway maps" '^checkout check-application test registry build manifest$' "$(line app-build tasks)"
+expect "app-build takes Agent Runway's parameters" '^release project repository ref applicationSha256 runtime platforms$' "$(line app-build parameters)"
+build_yaml=$(cat charts/delivery/files/app-build.yaml)
+expect "app-build builds arm64 alone by default" "value: '\\[\"linux/arm64\"\\]'" "$build_yaml"
+expect "each platform builds on a node of its architecture" 'kubernetes.io/arch: "\{\{inputs.parameters.arch\}\}"' "$build_yaml"
+expect "steps run one at a time on the ReadWriteOnce work volume" '^      parallelism: 1$' "$build_yaml"
+refuse "no platform is emulated" 'qemu|binfmt' "$build_yaml"
 expect "app-build returns revision and image" '^image revision$' "$(line app-build outputs)"
 expect "app-deploy keeps the step names Agent Runway maps" '^deploy verify$' "$(line app-deploy tasks)"
 expect "app-deploy takes Agent Runway's parameters" '^deployment project environment image application host$' "$(line app-deploy parameters)"

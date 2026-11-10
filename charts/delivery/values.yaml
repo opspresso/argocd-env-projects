@@ -3,8 +3,6 @@ registry: ""
 # terraform-env-apps demo/8-app-delivery: the role a build assumes to push to one Project repository.
 pushRoleArn: ""
 region: ap-northeast-2
-# The cluster architecture. Nodes of eks-demo are Graviton (arm64).
-platform: linux/arm64
 gitops:
   repository: opspresso/argocd-env-projects
   branch: main

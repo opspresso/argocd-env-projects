@@ -51,8 +51,9 @@ flowchart LR
 | `app-build` | `checkout` | `delivery-git` | 요청한 ref를 clone하고 commit SHA를 기록한다. Secret `<workflow>-checkout`의 token이 있으면(관리자가 허용한 비공개 저장소) github.com 요청 header로만 쓴다 |
 | `app-build` | `check-application` | `delivery-runner` | `application.yaml`이 Agent Runway에 적용한 파일과 같은지 SHA-256으로 확인한다. 다르면 exit code 3이다 |
 | `app-build` | `test` | `delivery-runner` | `runtime.test.image`에서 `runtime.test.command`를 실행한다. 없으면 건너뛴다 |
-| `app-build` | `registry` | `delivery-registry` | ECR repository를 만들고, 같은 commit 이미지가 있으면 재사용한다. 없으면 그 Project에만 push할 수 있는 credential을 만든다 |
-| `app-build` | `build` | `delivery-runner` | kaniko로 linux/arm64 이미지를 빌드해 commit SHA tag로 push한다. user namespace·privileged가 필요 없다 |
+| `app-build` | `registry` | `delivery-registry` | ECR repository를 만들고, 같은 Release tag(arm64만이면 `<commit>`, 그 밖에는 `<commit>-<arch>-<arch>`)의 이미지가 있으면 재사용한다. 없으면 그 Project에만 push할 수 있는 credential을 만들고 build할 platform을 정한다 |
+| `app-build` | `build` | `delivery-runner` | parameter `platforms`(기본 `["linux/arm64"]`)의 platform마다 그 architecture 노드에서 kaniko로 빌드해 push한다. 에뮬레이션(QEMU)은 쓰지 않는다. amd64 노드는 taint가 있는 NodePool `delivery-amd64`(`terraform-env-demo` `demo/6-eks-node`)에서 뜬다. user namespace·privileged가 필요 없다 |
+| `app-build` | `manifest` | `delivery-runner` | platform이 둘 이상이면 platform별 이미지(`<commit>-build-<arch>`)를 manifest list 하나로 묶어 Release tag로 push한다. Release `image`는 그 list의 digest다 |
 | `app-deploy` | `deploy` | `delivery-git` | 이미지가 그 Project의 digest 고정 이미지인지 확인하고 `projects/<slug>/<env>/app.yaml`에 기록한다. 이 저장소에만 쓰기 권한이 있는 deploy key(SSM `/k8s/common/app-delivery/gitops-deploy-key`)로 push한다 |
 | `app-deploy` | `verify` | `delivery-verify` | rollout 완료와 `https://<host><health>`의 2xx 응답을 기다린다 |
 | `app-remove` | `remove` | `delivery-git` | `projects/<slug>/<env>/app.yaml`을 지운다. 리소스는 그대로 둔다 |
