@@ -53,6 +53,16 @@ spec:
     - name: deploy
       serviceAccountName: delivery-target
       activeDeadlineSeconds: 3300
+      # A Pod lost with its node (a Spot reclaim) or ended by a signal runs again; every step is safe to repeat.
+      retryStrategy:
+        limit: 2
+        retryPolicy: Always
+        backoff: {duration: 10s}
+        expression: lastRetry.status == "Error" || lastRetry.exitCode == "143"
+      # Karpenter does not move the Pod to consolidate nodes while the step runs.
+      metadata:
+        annotations:
+          karpenter.sh/do-not-disrupt: "true"
       container:
         image: alpine/k8s:1.37.1
         command: [sh, -euc]
@@ -82,6 +92,11 @@ spec:
             # A CloudFormation parameter value holds at most 4096 bytes.
             [ "${#app_config}" -le 4096 ] || { echo "The runtime and non-secret Variables exceed 3 KiB for an aws-asg Target"; exit 1; }
             assume_target "deploy-${DEPLOYMENT}"
+            # An earlier attempt of this step may have left an operation running; deploy after it ends.
+            until status=$(aws cloudformation describe-stacks --stack-name "$stack" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo NONE); \
+              case "$status" in *_IN_PROGRESS) false;; *) true;; esac; do
+              echo "Waiting for stack $stack ($status)"; sleep 15
+            done
             echo "Updating stack ${stack} to Deployment ${DEPLOYMENT} (${IMAGE})"
             aws cloudformation deploy --stack-name "$stack" --template-file /etc/delivery-scripts/asg-stack.yaml \
               --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset \
@@ -131,6 +146,16 @@ spec:
     - name: verify
       serviceAccountName: delivery-target
       activeDeadlineSeconds: 900
+      # A Pod lost with its node (a Spot reclaim) or ended by a signal runs again; every step is safe to repeat.
+      retryStrategy:
+        limit: 2
+        retryPolicy: Always
+        backoff: {duration: 10s}
+        expression: lastRetry.status == "Error" || lastRetry.exitCode == "143"
+      # Karpenter does not move the Pod to consolidate nodes while the step runs.
+      metadata:
+        annotations:
+          karpenter.sh/do-not-disrupt: "true"
       container:
         image: alpine/k8s:1.37.1
         command: [sh, -euc]
