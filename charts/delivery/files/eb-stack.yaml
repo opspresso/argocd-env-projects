@@ -1,0 +1,182 @@
+AWSTemplateFormatVersion: "2010-09-09"
+# One Project environment on an aws-eb Target (agent-platform docs/DELIVERY_V3.md D2). The app-deploy-eb Workflow
+# creates or updates the stack runway-<project>-<environment> with the Release's source bundle; the app-remove-eb
+# Workflow deletes it. Every value comes from Agent Runway and the Target, never from the app repository.
+Description: Agent Runway app on Elastic Beanstalk (Docker)
+
+Parameters:
+  Project:
+    Type: String
+    AllowedPattern: "^[a-z][a-z0-9-]{1,30}[a-z0-9]$"
+  Environment:
+    Type: String
+    AllowedPattern: "^[a-z][a-z0-9]{1,11}$"
+  DeploymentId:
+    Type: String
+    Description: The Agent Runway Deployment that last changed the stack; a new value deploys the version again.
+  SolutionStackName:
+    Type: String
+    Description: The Target's Elastic Beanstalk Docker platform, for example "64bit Amazon Linux 2023 v4.14.1 running Docker".
+  ServiceRoleArn:
+    Type: String
+    Description: The Elastic Beanstalk service role of the Target account.
+  PermissionsBoundaryArn:
+    Type: String
+    Description: The boundary every role of a Runway stack carries; the deploy role can create roles only with it.
+  VersionBucket:
+    Type: String
+  VersionKey:
+    Type: String
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  InstanceSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+  LoadBalancerSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+  CertificateArn:
+    Type: String
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+  Host:
+    Type: String
+    AllowedPattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+  InstanceType:
+    Type: String
+  MinSize:
+    Type: Number
+    MinValue: 1
+    MaxValue: 10
+  MaxSize:
+    Type: Number
+    MinValue: 1
+    MaxValue: 10
+  HealthPath:
+    Type: String
+    AllowedPattern: "^/.*$"
+  SecretsPath:
+    Type: String
+    Description: The SSM path of this Project environment's Variables (/agent-runway/<target>/<project>/<environment>).
+    AllowedPattern: "^/agent-runway/[a-z0-9-]+/[a-z0-9-]+/[a-z0-9]+$"
+  SecretsKeyArn:
+    Type: String
+    Description: The KMS key of the SecureString Variables.
+  RepositoryArn:
+    Type: String
+    Description: The ECR repository projects/<project> the instances pull the Release image from.
+
+Resources:
+  # The instances read only this environment's Variables and pull only this Project's images.
+  # Named <stack>-app so the Target deploy role, which may change only roles and instance profiles named
+  # runway-<project>-<environment>-*, can manage them; generated names cut long stack names.
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-app
+      PermissionsBoundary: !Ref PermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AWSElasticBeanstalkWebTier
+      Policies:
+        - PolicyName: runway-app
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ssm:GetParametersByPath]
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPath}
+              - Effect: Allow
+                Action: [kms:Decrypt]
+                Resource: !Ref SecretsKeyArn
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+              - Effect: Allow
+                Action: [ecr:GetAuthorizationToken]
+                Resource: "*"
+              - Effect: Allow
+                Action: [ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, ecr:BatchCheckLayerAvailability]
+                Resource: !Ref RepositoryArn
+      Tags:
+        - { Key: opspresso.com/delivery-project, Value: !Ref Project }
+        - { Key: opspresso.com/delivery-env, Value: !Ref Environment }
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub ${AWS::StackName}-app
+      Roles: [!Ref InstanceRole]
+
+  Application:
+    Type: AWS::ElasticBeanstalk::Application
+    Properties:
+      ApplicationName: !Ref AWS::StackName
+      Description: !Sub Agent Runway ${Project} ${Environment}
+
+  Version:
+    Type: AWS::ElasticBeanstalk::ApplicationVersion
+    Properties:
+      ApplicationName: !Ref Application
+      Description: !Sub Deployment ${DeploymentId}
+      SourceBundle:
+        S3Bucket: !Ref VersionBucket
+        S3Key: !Ref VersionKey
+
+  # Elastic Beanstalk names the environment (its name has a 40-character limit that <project>-<environment> exceeds).
+  AppEnvironment:
+    Type: AWS::ElasticBeanstalk::Environment
+    Properties:
+      ApplicationName: !Ref Application
+      SolutionStackName: !Ref SolutionStackName
+      VersionLabel: !Ref Version
+      Tags:
+        - { Key: opspresso.com/delivery-project, Value: !Ref Project }
+        - { Key: opspresso.com/delivery-env, Value: !Ref Environment }
+      OptionSettings:
+        - { Namespace: aws:elasticbeanstalk:environment, OptionName: EnvironmentType, Value: LoadBalanced }
+        - { Namespace: aws:elasticbeanstalk:environment, OptionName: LoadBalancerType, Value: application }
+        - { Namespace: aws:elasticbeanstalk:environment, OptionName: ServiceRole, Value: !Ref ServiceRoleArn }
+        - { Namespace: aws:autoscaling:launchconfiguration, OptionName: IamInstanceProfile, Value: !Ref InstanceProfile }
+        - { Namespace: aws:autoscaling:launchconfiguration, OptionName: DisableIMDSv1, Value: "true" }
+        - { Namespace: aws:ec2:instances, OptionName: InstanceTypes, Value: !Ref InstanceType }
+        - { Namespace: aws:autoscaling:asg, OptionName: MinSize, Value: !Ref MinSize }
+        - { Namespace: aws:autoscaling:asg, OptionName: MaxSize, Value: !Ref MaxSize }
+        - { Namespace: aws:ec2:vpc, OptionName: VPCId, Value: !Ref VpcId }
+        - { Namespace: aws:ec2:vpc, OptionName: Subnets, Value: !Join [",", !Ref InstanceSubnets] }
+        - { Namespace: aws:ec2:vpc, OptionName: ELBSubnets, Value: !Join [",", !Ref LoadBalancerSubnets] }
+        - { Namespace: aws:ec2:vpc, OptionName: ELBScheme, Value: public }
+        - { Namespace: aws:ec2:vpc, OptionName: AssociatePublicIpAddress, Value: "false" }
+        # HTTPS only; the plain listener is off so no request reaches the app without TLS.
+        - { Namespace: aws:elbv2:listener:default, OptionName: ListenerEnabled, Value: "false" }
+        - { Namespace: aws:elbv2:listener:443, OptionName: Protocol, Value: HTTPS }
+        - { Namespace: aws:elbv2:listener:443, OptionName: SSLCertificateArns, Value: !Ref CertificateArn }
+        - { Namespace: aws:elbv2:listener:443, OptionName: SSLPolicy, Value: ELBSecurityPolicy-TLS13-1-2-2021-06 }
+        - { Namespace: aws:elasticbeanstalk:environment:process:default, OptionName: Port, Value: "80" }
+        - { Namespace: aws:elasticbeanstalk:environment:process:default, OptionName: HealthCheckPath, Value: !Ref HealthPath }
+        - { Namespace: aws:elasticbeanstalk:environment:process:default, OptionName: MatcherHTTPCode, Value: "200-299" }
+        - { Namespace: aws:elasticbeanstalk:healthreporting:system, OptionName: SystemType, Value: enhanced }
+        # A new version starts on new instances and replaces the old ones only when they pass the health check.
+        - { Namespace: aws:elasticbeanstalk:command, OptionName: DeploymentPolicy, Value: Immutable }
+        - { Namespace: aws:autoscaling:updatepolicy:rollingupdate, OptionName: RollingUpdateType, Value: Immutable }
+        - { Namespace: aws:elasticbeanstalk:cloudwatch:logs, OptionName: StreamLogs, Value: "true" }
+        - { Namespace: aws:elasticbeanstalk:cloudwatch:logs, OptionName: RetentionInDays, Value: "14" }
+        - { Namespace: aws:elasticbeanstalk:cloudwatch:logs, OptionName: DeleteOnTerminate, Value: "true" }
+
+  Record:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref Host
+      Type: CNAME
+      TTL: "60"
+      ResourceRecords: [!GetAtt AppEnvironment.EndpointURL]
+
+Outputs:
+  EndpointURL:
+    Value: !GetAtt AppEnvironment.EndpointURL
+  EnvironmentName:
+    Value: !Ref AppEnvironment

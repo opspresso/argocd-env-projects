@@ -4,8 +4,8 @@ Lines: "<template> tasks|parameters|outputs <names>" and "all deploy-key <templa
 """
 import yaml
 
-ENTRYPOINTS = {"app-build": "release", "app-deploy": "deployment", "app-remove": "removal", "resource-sync": "sync",
-               "env-cleanup": "sweep"}
+ENTRYPOINTS = {"app-build": "release", "app-deploy": "deployment", "app-remove": "removal",
+               "app-deploy-eb": "deployment", "app-remove-eb": "removal", "resource-sync": "sync", "env-cleanup": "sweep"}
 
 
 def load(name):
@@ -14,6 +14,7 @@ def load(name):
 
 
 key_holders = []
+target_steps = []
 for name, entry in ENTRYPOINTS.items():
     template = load(name)
     spec = template["spec"]
@@ -22,7 +23,7 @@ for name, entry in ENTRYPOINTS.items():
     # Agent Runway reads results and logs: Workflows stay 1 day. The build and deploy steps keep every Pod as long,
     # so deployment_logs can return a successful step's output too; resource-sync output is not read.
     assert spec["ttlStrategy"] == {"secondsAfterSuccess": 86400, "secondsAfterFailure": 86400}, name
-    if name in ("app-build", "app-deploy", "app-remove"):
+    if name in ("app-build", "app-deploy", "app-remove", "app-deploy-eb", "app-remove-eb"):
         # Explicit, because the controller's workflowDefaults (OnPodSuccess) apply when podGC is absent.
         assert spec["podGC"] == {"strategy": "OnWorkflowCompletion", "deleteDelayDuration": "24h"}, name
     else:
@@ -46,10 +47,13 @@ for name, entry in ENTRYPOINTS.items():
             assert step.get("serviceAccountName") is None, (name, step["name"])
             assert step.get("automountServiceAccountToken") is False, (name, step["name"])
             assert step["metadata"]["labels"]["opspresso.com/delivery-role"] == "runner", (name, step["name"])
+        if account == "delivery-target":
+            target_steps.append(f"{name}:{step['name']}")
         secrets = [v["secret"]["secretName"] for v in step.get("volumes", []) if "secret" in v]
         if "gitops-deploy-key" in secrets:
             key_holders.append(f"{name}:{step['name']}:{account}")
 print("all deploy-key", " ".join(key_holders))
+print("all delivery-target", " ".join(target_steps))
 
 build = {t["name"]: t for t in load("app-build")["spec"]["templates"]}
 for task in ("test", "build", "check-application"):

@@ -1,0 +1,185 @@
+# One Deployment to an aws-eb Target (agent-platform docs/DELIVERY_V3.md D2): deploy one Release (an image pinned by
+# digest) to the Elastic Beanstalk environment of one Project environment. Agent Runway is the only submitter and
+# names the Workflow deploy-<Deployment ID>. Every parameter comes from Agent Runway, which chose the Target, the
+# environment and its host. Result: url (https://<host>). Same parameters, results and DAG task names as app-deploy,
+# plus target.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: app-deploy-eb
+spec:
+  entrypoint: deployment
+  # Shared with app-deploy and app-remove-eb: one change per Project environment at a time.
+  synchronization:
+    mutexes:
+      - name: "deploy-{{workflow.parameters.project}}-{{workflow.parameters.environment}}"
+  serviceAccountName: delivery-target
+  activeDeadlineSeconds: 3600
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 86400
+  podGC:
+    strategy: OnWorkflowCompletion
+    deleteDelayDuration: 24h
+  securityContext:
+    fsGroup: 1000
+  arguments:
+    parameters:
+      - name: deployment
+      - name: project
+      - name: environment
+      # The Release image: <registry>/<project>@sha256:<digest>.
+      - name: image
+      # The declaration of this environment with defaults filled in (JSON {runtime, environment, config}).
+      - name: application
+      - name: host
+      # The Target without secrets (JSON): kind aws-eb, account, region, deployRole, artifactBucket, solutionStack,
+      # serviceRole, permissionsBoundary, vpcId, instanceSubnets, loadBalancerSubnets, certificateArn, hostedZoneId,
+      # secretsKeyArn, instanceTypes, defaultInstanceType.
+      - name: target
+  templates:
+    - name: deployment
+      dag:
+        tasks:
+          - name: deploy
+            template: deploy
+          - name: verify
+            template: verify
+            depends: deploy
+
+    # Writes the source bundle and creates or updates the stack runway-<project>-<environment> in the Target account.
+    # CloudFormation rolls a failed update back, and the Immutable policy replaces instances only after the new ones
+    # pass the health check, so a failed Deployment leaves the previous Release running.
+    - name: deploy
+      serviceAccountName: delivery-target
+      activeDeadlineSeconds: 3300
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            . /etc/delivery-scripts/target.sh
+            require name region deployRole artifactBucket solutionStack serviceRole permissionsBoundary vpcId \
+              instanceSubnets loadBalancerSubnets certificateArn hostedZoneId secretsKeyArn instanceTypes defaultInstanceType
+            printf '%s' "$IMAGE" | grep -qE "^${REGISTRY}/${PROJECT}@sha256:[a-f0-9]{64}$" \
+              || { echo "Image $IMAGE is not an image of ${REGISTRY}/${PROJECT} pinned by digest"; exit 1; }
+            stack="runway-${PROJECT}-${ENVIRONMENT}"
+            secrets_path="/agent-runway/$(field name)/${PROJECT}/${ENVIRONMENT}"
+            instance_type=$(printf '%s' "$APPLICATION" | jq -r --arg default "$(field defaultInstanceType)" '.environment.instanceType // $default')
+            printf '%s' "$TARGET" | jq -e --arg type "$instance_type" '.instanceTypes | index($type)' >/dev/null \
+              || { echo "Instance type $instance_type is not allowed on Target $(field name)"; exit 1; }
+            min=$(printf '%s' "$APPLICATION" | jq -r '.environment.replicas // 1')
+            max=$(printf '%s' "$APPLICATION" | jq -r '.environment.maxReplicas // .environment.replicas // 1')
+            health=$(printf '%s' "$APPLICATION" | jq -r '.runtime.health // "/health"')
+            registry_account=${REGISTRY%%.*}
+            registry_region=$(printf '%s' "$REGISTRY" | cut -d. -f4)
+
+            printf '%s' "$APPLICATION" > /tmp/application.json
+            python3 -I /etc/delivery-scripts/eb-bundle.py /tmp/application.json "$IMAGE" "$secrets_path" "$(field region)" /tmp/bundle.zip
+            assume_target "deploy-${DEPLOYMENT}"
+            key="${PROJECT}/${ENVIRONMENT}/${DEPLOYMENT}.zip"
+            aws s3 cp --only-show-errors /tmp/bundle.zip "s3://$(field artifactBucket)/${key}"
+            echo "Updating stack ${stack} to Deployment ${DEPLOYMENT} (${IMAGE})"
+            aws cloudformation deploy --stack-name "$stack" --template-file /etc/delivery-scripts/eb-stack.yaml \
+              --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset \
+              --tags "opspresso.com/delivery-project=${PROJECT}" "opspresso.com/delivery-env=${ENVIRONMENT}" \
+              --parameter-overrides \
+                "Project=${PROJECT}" "Environment=${ENVIRONMENT}" "DeploymentId=${DEPLOYMENT}" \
+                "SolutionStackName=$(field solutionStack)" "ServiceRoleArn=$(field serviceRole)" \
+                "PermissionsBoundaryArn=$(field permissionsBoundary)" \
+                "VersionBucket=$(field artifactBucket)" "VersionKey=${key}" "VpcId=$(field vpcId)" \
+                "InstanceSubnets=$(list instanceSubnets)" "LoadBalancerSubnets=$(list loadBalancerSubnets)" \
+                "CertificateArn=$(field certificateArn)" "HostedZoneId=$(field hostedZoneId)" "Host=${HOST}" \
+                "InstanceType=${instance_type}" "MinSize=${min}" "MaxSize=${max}" "HealthPath=${health}" \
+                "SecretsPath=${secrets_path}" "SecretsKeyArn=$(field secretsKeyArn)" \
+                "RepositoryArn=arn:aws:ecr:${registry_region}:${registry_account}:repository/${REGISTRY#*/}/${PROJECT}" \
+              || { aws cloudformation describe-stack-events --stack-name "$stack" --max-items 20 \
+                     --query 'StackEvents[?contains(ResourceStatus, `FAILED`)].[LogicalResourceId,ResourceStatusReason]' --output text || true; exit 1; }
+        env: &env
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
+          - {name: DEPLOYMENT, value: "{{workflow.parameters.deployment}}"}
+          - {name: IMAGE, value: "{{workflow.parameters.image}}"}
+          - {name: APPLICATION, value: "{{workflow.parameters.application}}"}
+          - {name: HOST, value: "{{workflow.parameters.host}}"}
+          - {name: TARGET, value: "{{workflow.parameters.target}}"}
+          - {name: TARGET_KIND, value: aws-eb}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: &unprivileged
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources: &small
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {memory: 512Mi}
+        volumeMounts: &mounts
+          - {name: scripts, mountPath: /etc/delivery-scripts, readOnly: true}
+      volumes: &volumes
+        - name: scripts
+          configMap:
+            name: delivery-scripts
+
+    # Waits until the environment runs this Deployment's version with Ok health and the host answers on the health path.
+    - name: verify
+      serviceAccountName: delivery-target
+      activeDeadlineSeconds: 900
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            . /etc/delivery-scripts/target.sh
+            require region deployRole
+            stack="runway-${PROJECT}-${ENVIRONMENT}"
+            health=$(printf '%s' "$APPLICATION" | jq -r '.runtime.health // "/health"')
+            assume_target "verify-${DEPLOYMENT}"
+            environment=$(aws cloudformation describe-stacks --stack-name "$stack" \
+              --query 'Stacks[0].Outputs[?OutputKey==`EnvironmentName`].OutputValue' --output text)
+            deadline=$(( $(date +%s) + 600 ))
+            while :; do
+              state=$(aws elasticbeanstalk describe-environments --environment-names "$environment" --output json \
+                --query 'Environments[0].{status:Status,health:HealthStatus,version:VersionLabel}')
+              version=$(printf '%s' "$state" | jq -r .version)
+              description=$(aws elasticbeanstalk describe-application-versions --application-name "$stack" \
+                --version-labels "$version" --query 'ApplicationVersions[0].Description' --output text)
+              if printf '%s' "$state" | jq -e '.status == "Ready" and .health == "Ok"' >/dev/null \
+                && [ "$description" = "Deployment ${DEPLOYMENT}" ]; then
+                break
+              fi
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                echo "Environment $environment did not run Deployment ${DEPLOYMENT} with Ok health in 10 minutes: $state"
+                aws elasticbeanstalk describe-events --environment-name "$environment" --max-items 20 \
+                  --query 'Events[].[EventDate,Severity,Message]' --output text || true
+                exit 1
+              fi
+              sleep 10
+            done
+            url="https://${HOST}"
+            echo "Environment $environment runs Deployment ${DEPLOYMENT}. Checking ${url}${health}"
+            deadline=$(( $(date +%s) + 300 ))
+            until curl -fsS -o /dev/null --max-time 10 "${url}${health}"; do
+              if [ "$(date +%s)" -ge "$deadline" ]; then echo "${url}${health} did not answer with 2xx in 5 minutes"; exit 1; fi
+              sleep 5
+            done
+            printf '%s' "$url" > /tmp/url
+            echo "${url}${health} answered with 2xx"
+        env: *env
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: *unprivileged
+        resources: *small
+        volumeMounts: *mounts
+      volumes: *volumes
+      outputs:
+        parameters:
+          - name: url
+            globalName: url
+            valueFrom:
+              path: /tmp/url

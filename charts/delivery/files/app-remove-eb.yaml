@@ -1,0 +1,109 @@
+# Stops the service of one Project environment on an aws-eb Target (agent-platform docs/DELIVERY_V3.md D2): deletes
+# the stack runway-<project>-<environment>. Resources and Variables stay. Agent Runway names the Workflow
+# deploy-<Deployment ID>. Same parameters and DAG task names as app-remove, plus target.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: app-remove-eb
+spec:
+  entrypoint: removal
+  synchronization:
+    mutexes:
+      - name: "deploy-{{workflow.parameters.project}}-{{workflow.parameters.environment}}"
+  serviceAccountName: delivery-target
+  activeDeadlineSeconds: 3600
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 86400
+  podGC:
+    strategy: OnWorkflowCompletion
+    deleteDelayDuration: 24h
+  arguments:
+    parameters:
+      - name: deployment
+      - name: project
+      - name: environment
+      - name: target
+  templates:
+    - name: removal
+      dag:
+        tasks:
+          - name: remove
+            template: remove
+          - name: verify
+            template: verify
+            depends: remove
+
+    - name: remove
+      serviceAccountName: delivery-target
+      activeDeadlineSeconds: 2700
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            . /etc/delivery-scripts/target.sh
+            require region deployRole
+            stack="runway-${PROJECT}-${ENVIRONMENT}"
+            assume_target "remove-${DEPLOYMENT}"
+            if ! aws cloudformation describe-stacks --stack-name "$stack" >/dev/null 2>&1; then
+              echo "Stack $stack does not exist"; exit 0
+            fi
+            echo "Deleting stack $stack (Deployment ${DEPLOYMENT})"
+            aws cloudformation delete-stack --stack-name "$stack"
+            aws cloudformation wait stack-delete-complete --stack-name "$stack" \
+              || { aws cloudformation describe-stack-events --stack-name "$stack" --max-items 20 \
+                     --query 'StackEvents[?contains(ResourceStatus, `FAILED`)].[LogicalResourceId,ResourceStatusReason]' --output text || true; exit 1; }
+        env: &env
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
+          - {name: DEPLOYMENT, value: "{{workflow.parameters.deployment}}"}
+          - {name: TARGET, value: "{{workflow.parameters.target}}"}
+          - {name: TARGET_KIND, value: aws-eb}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: &unprivileged
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources: &small
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {memory: 512Mi}
+        volumeMounts: &mounts
+          - {name: scripts, mountPath: /etc/delivery-scripts, readOnly: true}
+      volumes: &volumes
+        - name: scripts
+          configMap:
+            name: delivery-scripts
+
+    # Confirms that the stack is gone.
+    - name: verify
+      serviceAccountName: delivery-target
+      activeDeadlineSeconds: 300
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            . /etc/delivery-scripts/target.sh
+            require region deployRole
+            assume_target "verify-${DEPLOYMENT}"
+            stack="runway-${PROJECT}-${ENVIRONMENT}"
+            if status=$(aws cloudformation describe-stacks --stack-name "$stack" --query 'Stacks[0].StackStatus' --output text 2>/dev/null) \
+              && [ "$status" != DELETE_COMPLETE ]; then
+              echo "Stack $stack still exists ($status)"; exit 1
+            fi
+            echo "Stack $stack is deleted"
+        env: *env
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: *unprivileged
+        resources: *small
+        volumeMounts: *mounts
+      volumes: *volumes

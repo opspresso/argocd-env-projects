@@ -44,14 +44,15 @@ data:
     {{ . }}
     {{- end }}
 ---
-# Scripts of the GitOps steps: the values renderer of the deploy step (scripts/test.sh checks charts/app against its
-# output), the resource check of resource-sync and the commit that both use.
+# Scripts of the steps: the values renderer of the deploy step (scripts/test.sh checks charts/app against its
+# output), the resource check of resource-sync, the commit that both use, and the Target helpers, source bundle and
+# stack of the aws-eb Workflows.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: delivery-scripts
 data:
-{{- range list "render.jq" "check-resources.sh" "commit.sh" }}
+{{- range list "render.jq" "check-resources.sh" "commit.sh" "target.sh" "eb-bundle.py" "eb-stack.yaml" }}
   {{ . }}: |
 {{ $.Files.Get (printf "files/%s" .) | indent 4 }}
 {{- end }}
