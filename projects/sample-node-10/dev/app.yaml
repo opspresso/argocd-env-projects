@@ -1,10 +1,10 @@
-# Written by the app-deploy workflow for Deployment 36035a2f-cf0a-4892-8482-2ee7e238e966. Do not edit.
-deployment: 36035a2f-cf0a-4892-8482-2ee7e238e966
+# Written by the app-deploy workflow for Deployment 26614f64-23da-49dc-93e3-66479ae880e6. Do not edit.
+deployment: 26614f64-23da-49dc-93e3-66479ae880e6
 app:
   controller:
     enabled: true
   image:
-    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-node-10@sha256:8dabb8cb82c545792b89674820a5ecd1a1f60f1f6c83175c2c23ed9277842246
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-node-10@sha256:9e68ad4a761cc33fb568c5768c9ba3c1a0a9857f18a44253bd9f46e03f3caef2
   replicaCount: 1
   autoscaling:
     enabled: false
@@ -45,6 +45,12 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: 36035a2f-cf0a-4892-8482-2ee7e238e966
+      force-sync: 26614f64-23da-49dc-93e3-66479ae880e6
+  configmap:
+    enabled: true
+    data:
+      CACHE_VALKEY_HOST: cache.app-sample-node-10-dev.svc.cluster.local
+      CACHE_VALKEY_PORT: "6379"
+      CACHE_VALKEY_USERNAME: default
   podAnnotations:
-    opspresso.com/deployment: 36035a2f-cf0a-4892-8482-2ee7e238e966
+    opspresso.com/deployment: 26614f64-23da-49dc-93e3-66479ae880e6
