@@ -1,0 +1,52 @@
+# Written by the app-deploy workflow for Deployment 6985c52d-8960-48be-9c5c-7e337263c163. Do not edit.
+deployment: 6985c52d-8960-48be-9c5c-7e337263c163
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/runway-vm-sample@sha256:e26af160d7896ca0d47426355b54904f6d76acfcc1c1dfd654e43d4ba1538919
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 3000
+  routing:
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "3000"
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: 6985c52d-8960-48be-9c5c-7e337263c163
+  configmap:
+    enabled: false
+  podAnnotations:
+    opspresso.com/deployment: 6985c52d-8960-48be-9c5c-7e337263c163
