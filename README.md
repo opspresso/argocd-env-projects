@@ -62,6 +62,10 @@ flowchart LR
 | `app-deploy-eb` | `deploy` | `delivery-target` | `aws-eb` Target의 deploy role을 넘겨받는다. source bundle(`eb-bundle.py`: digest 고정 이미지의 `docker-compose.yml`과, 시작할 때 그 환경의 SSM 경로에서 비밀 값을 읽는 hook)을 Target bucket에 올리고 stack `runway-<slug>-<env>`(`eb-stack.yaml`)를 만들거나 갱신한다. Immutable 배포이고 실패하면 CloudFormation이 되돌린다 |
 | `app-deploy-eb` | `verify` | `delivery-target` | Elastic Beanstalk 환경이 이 Deployment의 version을 `Ok` health로 실행하고 `https://<host><health>`가 2xx를 반환할 때까지 기다린다 |
 | `app-remove-eb` | `remove`·`verify` | `delivery-target` | stack `runway-<slug>-<env>`를 지우고 없어졌는지 확인한다. 리소스와 Variable은 남긴다 |
+| `app-deploy-asg` | `deploy` | `delivery-target` | `aws-asg` Target의 deploy role로 stack `runway-<slug>-<env>`(`asg-stack.yaml`: 환경 전용 ALB·target group·launch template·Auto Scaling group·DNS)를 만들거나 갱신한다. 새 Deployment는 Auto Scaling group을 교체하고, 새 instance가 healthy app을 signal해야 옛 group을 지운다. 아니면 CloudFormation이 되돌린다 |
+| `app-deploy-asg` | `verify` | `delivery-target` | stack이 이 Deployment를 완료했고 `https://<host><health>`가 2xx를 반환하는지 확인한다 |
+| `app-remove-asg` | `remove`·`verify` | `delivery-target` | stack `runway-<slug>-<env>`를 지우고 없어졌는지 확인한다 |
+| `image-bake` | `build` | `delivery-target` | Target의 bake role로 packer(`images/vm-node.pkr.hcl`)를 실행해 golden image `agent-runway-<name>-<version>`(Amazon Linux 2023, Docker, cfn-signal, `runway-app`)을 만든다. 결과 `imageId`는 AMI ID다 |
 | `resource-sync` | `write` | `delivery-git` | manifest가 허용한 kro 인스턴스 종류(`resourceKinds`) 또는 chart(`resourceCharts`)이고 그 환경 namespace에 속하는지, 이름이 `^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$`이고 고유한지 확인하고 `projects/<slug>/<env>/resources.yaml`과 `resources/<name>.yaml`을 통째로 바꾼다. 리소스를 모두 지우려면 `{apiVersion: v1, kind: List, items: []}` 문서를 보낸다. 빈 manifest는 거부한다 |
 | `resource-sync` | `cleanup` | `delivery-verify`·`delivery-git` | `env-cleanup`의 `locked`. `deploy-<slug>-<env>` mutex를 잡고 `check-and-prune`을 실행한다 |
 | `env-cleanup` | `scan` | `delivery-verify` | 공개 저장소를 자격 증명 없이 clone하고, `app.yaml`·`resources/<name>.yaml`이 없고 `resources.yaml`에 주석만 있는 환경 디렉터리를 찾는다 |

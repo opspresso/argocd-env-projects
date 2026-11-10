@@ -46,13 +46,17 @@ data:
 ---
 # Scripts of the steps: the values renderer of the deploy step (scripts/test.sh checks charts/app against its
 # output), the resource check of resource-sync, the commit that both use, and the Target helpers, source bundle and
-# stack of the aws-eb Workflows.
+# stack of the aws-eb Workflows, the stack of the aws-asg Workflows and the golden image of image-bake.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: delivery-scripts
 data:
-{{- range list "render.jq" "check-resources.sh" "commit.sh" "target.sh" "eb-bundle.py" "eb-stack.yaml" }}
+{{- range list "render.jq" "check-resources.sh" "commit.sh" "target.sh" "eb-bundle.py" "eb-stack.yaml" "asg-stack.yaml" }}
   {{ . }}: |
 {{ $.Files.Get (printf "files/%s" .) | indent 4 }}
+{{- end }}
+{{- range list "vm-node.pkr.hcl" "runway-app.py" }}
+  {{ . }}: |
+{{ $.Files.Get (printf "files/images/%s" .) | indent 4 }}
 {{- end }}
