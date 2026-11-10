@@ -101,10 +101,12 @@ spec:
                 - name: tag
                   value: "{{tasks.registry.outputs.parameters.tag}}"
 
-    # Clones the requested ref and records the commit it resolves to. Agent Runway writes Secret <workflow>-checkout
-    # before this step runs: an empty token clones a public repository; a token (GitHub App, contents:read on this one
-    # repository) goes only into a one-shot header for github.com. Nothing is stored in /work/src/.git, which the test and
-    # build steps read, and redirects are refused so the header never leaves github.com.
+    # Clones the requested ref and records the commit it resolves to. The repository is <host>/<path>
+    # (github.com/owner/repo, gitlab.example.com/group/project); an owner/repo without a host is a github.com repository.
+    # Agent Runway writes Secret <workflow>-checkout before this step runs: an empty token clones a public repository; a
+    # token that reads only this repository (a GitHub App token, or the Project's GitLab deploy token with its username)
+    # goes only into a one-shot header for that host. Nothing is stored in /work/src/.git, which the test and build steps
+    # read, and redirects are refused so the header never leaves the host.
     - name: checkout
       serviceAccountName: delivery-git
       activeDeadlineSeconds: 300
@@ -120,14 +122,20 @@ spec:
           - |
             # Group-writable files let a test image that runs as another user write into the checkout.
             umask 0002
+            # A GitHub owner has no dot, so a first segment with one is a host.
+            case "${REPOSITORY%%/*}" in
+              *.*) host="${REPOSITORY%%/*}"; path="${REPOSITORY#*/}" ;;
+              *) host=github.com; path="${REPOSITORY}" ;;
+            esac
+            case "$host" in ""|*[!a-z0-9.-]*) echo "invalid repository host"; exit 1 ;; esac
             git init -q /work/src
             if [ -n "${GIT_TOKEN}" ]; then
-              header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GIT_TOKEN}" | base64 | tr -d '\n')"
-              git -C /work/src -c http.followRedirects=false -c "http.https://github.com/.extraheader=${header}" \
-                fetch -q --depth 1 "https://github.com/${REPOSITORY}.git" "${REF}"
+              header="AUTHORIZATION: basic $(printf '%s:%s' "${GIT_USER:-x-access-token}" "${GIT_TOKEN}" | base64 | tr -d '\n')"
+              git -C /work/src -c http.followRedirects=false -c "http.https://${host}/.extraheader=${header}" \
+                fetch -q --depth 1 "https://${host}/${path}.git" "${REF}"
               unset header
             else
-              git -C /work/src -c http.followRedirects=false fetch -q --depth 1 "https://github.com/${REPOSITORY}.git" "${REF}"
+              git -C /work/src -c http.followRedirects=false fetch -q --depth 1 "https://${host}/${path}.git" "${REF}"
             fi
             git -C /work/src checkout -q FETCH_HEAD
             git -C /work/src rev-parse HEAD > /work/revision
@@ -138,6 +146,9 @@ spec:
           - {name: HOME, value: /tmp}
           - name: GIT_TOKEN
             valueFrom: {secretKeyRef: {name: "{{workflow.name}}-checkout", key: token}}
+          # The HTTPS user of the token; absent before Agent Runway v0.50.0, where it is x-access-token.
+          - name: GIT_USER
+            valueFrom: {secretKeyRef: {name: "{{workflow.name}}-checkout", key: username, optional: true}}
         securityContext: &unprivileged
           runAsUser: 1000
           runAsGroup: 1000

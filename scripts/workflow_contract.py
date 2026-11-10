@@ -66,3 +66,5 @@ assert readers == ["checkout"], readers
 script = build["checkout"]["container"]["args"][0]
 assert "@github.com" not in script and "x-access-token:%s@" not in script, "token stays out of the URL"
 assert "git config" not in script and "--global" not in script, "token is not stored"
+assert '"http.https://${host}/.extraheader=${header}"' in script and '"https://${host}/${path}.git"' in script, "the header is scoped to the repository's host"
+
