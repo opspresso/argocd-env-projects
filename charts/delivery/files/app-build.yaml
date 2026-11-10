@@ -100,6 +100,12 @@ spec:
                   value: "{{tasks.registry.outputs.parameters.archs}}"
                 - name: tag
                   value: "{{tasks.registry.outputs.parameters.tag}}"
+          # The only step that returns the Release image. Argo keeps one value per global output, and which of several
+          # writers wins is not defined, so registry (a reused image), build (one platform) and manifest (more) write
+          # /work/image and this step reads it after them.
+          - name: result
+            template: result
+            depends: "registry && (build.Succeeded || build.Skipped) && (manifest.Succeeded || manifest.Skipped)"
 
     # Clones the requested ref and records the commit it resolves to. The repository is <host>/<path>
     # (github.com/owner/repo, gitlab.example.com/group/project); an owner/repo without a host is a github.com repository.
@@ -345,11 +351,6 @@ spec:
           - name: builds
             valueFrom:
               path: /work/builds
-          # Set only when the image is reused; otherwise the build task sets it.
-          - name: image
-            globalName: image
-            valueFrom:
-              path: /work/image
 
     # Builds the Dockerfile with kaniko for one platform on a node of that architecture and pushes it. kaniko needs no
     # user namespace or privilege (eks-demo runs Bottlerocket on EKS Auto Mode, where user namespaces are off). It runs
@@ -414,12 +415,6 @@ spec:
           limits: {memory: 6Gi}
         volumeMounts:
           - {name: work, mountPath: /work}
-      outputs:
-        parameters:
-          - name: image
-            globalName: image
-            valueFrom:
-              path: /work/image
 
     # Joins the platform images in one manifest list under the Release tag; the Release image is the list's digest.
     - name: manifest
@@ -460,6 +455,29 @@ spec:
         envFrom:
           - configMapRef:
               name: delivery-settings
+        securityContext: *unprivileged
+        resources: *small
+        volumeMounts:
+          - {name: work, mountPath: /work}
+
+    # Returns the Release image that registry, build or manifest wrote, and fails when none did.
+    - name: result
+      activeDeadlineSeconds: 120
+      retryStrategy: *reclaimed
+      # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
+      automountServiceAccountToken: false
+      executor:
+        serviceAccountName: delivery-runner
+      metadata:
+        labels:
+          opspresso.com/delivery-role: runner
+      container:
+        image: gcr.io/go-containerregistry/crane/debug:v0.22.1
+        command: [/busybox/sh, -euc]
+        args:
+          - |
+            image=$(cat /work/image)
+            case "$image" in *@sha256:*) echo "Release image $image";; *) echo "No Release image was written" >&2; exit 1;; esac
         securityContext: *unprivileged
         resources: *small
         volumeMounts:

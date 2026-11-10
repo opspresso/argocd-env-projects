@@ -62,7 +62,9 @@ for name, entry in ENTRYPOINTS.items():
     outputs = sorted(
         o["globalName"] for t in spec["templates"] for o in t.get("outputs", {}).get("parameters", []) if "globalName" in o
     )
-    print(name, "outputs", " ".join(sorted(set(outputs))))
+    # Argo keeps one value per global output and does not define which of several writers wins: one step owns each.
+    assert len(outputs) == len(set(outputs)), f"{name}: more than one step writes a global output: {outputs}"
+    print(name, "outputs", " ".join(outputs))
     mutexes = [m["name"] for m in spec.get("synchronization", {}).get("mutexes", [])]
     print(name, "mutexes", " ".join(mutexes))
     for step in spec["templates"]:
