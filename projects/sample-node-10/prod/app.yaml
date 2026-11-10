@@ -1,5 +1,5 @@
-# Written by the app-deploy workflow for Deployment d52940af-8864-4b0d-b1aa-71e8ba07066a. Do not edit.
-deployment: d52940af-8864-4b0d-b1aa-71e8ba07066a
+# Written by the app-deploy workflow for Deployment 3d5ff142-8fb3-4cf9-9add-0c8a2e597c1e. Do not edit.
+deployment: 3d5ff142-8fb3-4cf9-9add-0c8a2e597c1e
 app:
   controller:
     enabled: true
@@ -45,7 +45,7 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: d52940af-8864-4b0d-b1aa-71e8ba07066a
+      force-sync: 3d5ff142-8fb3-4cf9-9add-0c8a2e597c1e
   configmap:
     enabled: true
     data:
@@ -53,4 +53,4 @@ app:
       CACHE_VALKEY_PORT: "6379"
       CACHE_VALKEY_USERNAME: default
   podAnnotations:
-    opspresso.com/deployment: d52940af-8864-4b0d-b1aa-71e8ba07066a
+    opspresso.com/deployment: 3d5ff142-8fb3-4cf9-9add-0c8a2e597c1e
