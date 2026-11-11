@@ -1,5 +1,5 @@
-# Written by the app-deploy workflow for Deployment 7afd1d40-e0d8-4750-9c4a-0a306c4832ef. Do not edit.
-deployment: 7afd1d40-e0d8-4750-9c4a-0a306c4832ef
+# Written by the app-deploy workflow for Deployment 85ffeb6a-4153-41c4-8253-a782fca25275. Do not edit.
+deployment: 85ffeb6a-4153-41c4-8253-a782fca25275
 app:
   controller:
     enabled: true
@@ -14,6 +14,8 @@ app:
     enabled: true
     targetPort: 8080
   routing:
+    hosts:
+      - sample-spring-3.apps.rovr.dev
     httpRoute:
       enabled: true
   env:
@@ -45,12 +47,12 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: 7afd1d40-e0d8-4750-9c4a-0a306c4832ef
+      force-sync: 85ffeb6a-4153-41c4-8253-a782fca25275
   configmap:
     enabled: true
     data:
       CLUSTER_NAME: eks-demo
   podAnnotations:
-    opspresso.com/deployment: 7afd1d40-e0d8-4750-9c4a-0a306c4832ef
+    opspresso.com/deployment: 85ffeb6a-4153-41c4-8253-a782fca25275
   nodeSelector:
     kubernetes.io/arch: arm64
