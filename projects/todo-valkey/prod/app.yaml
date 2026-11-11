@@ -1,10 +1,10 @@
-# Written by the app-deploy workflow for Deployment f1204107-8440-49c6-95d0-f2ed3b795deb. Do not edit.
-deployment: f1204107-8440-49c6-95d0-f2ed3b795deb
+# Written by the app-deploy workflow for Deployment e0017798-7301-4759-9e19-099c23613aba. Do not edit.
+deployment: e0017798-7301-4759-9e19-099c23613aba
 app:
   controller:
     enabled: true
   image:
-    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo-valkey@sha256:236a925cfb1250d08fc59f5e8e2fe03693ceb35dc997c0f83c27035bf8ccbc1e
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo-valkey@sha256:00f651043f63cc92835b2efa8a6678116910743e4b0fb5fccbeeb89b688ece4c
   replicaCount: 1
   autoscaling:
     enabled: false
@@ -45,6 +45,14 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: f1204107-8440-49c6-95d0-f2ed3b795deb
+      force-sync: e0017798-7301-4759-9e19-099c23613aba
+  configmap:
+    enabled: true
+    data:
+      VALKEY_HOST: todo-valkey.app-todo-valkey-prod.svc.cluster.local
+      VALKEY_PORT: "6379"
+      VALKEY_USERNAME: default
   podAnnotations:
-    opspresso.com/deployment: f1204107-8440-49c6-95d0-f2ed3b795deb
+    opspresso.com/deployment: e0017798-7301-4759-9e19-099c23613aba
+  nodeSelector:
+    kubernetes.io/arch: arm64
