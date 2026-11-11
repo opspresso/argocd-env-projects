@@ -179,6 +179,12 @@ line() { grep -E "^$1 $2( |$)" <<<"$contract" | cut -d' ' -f3-; }
 expect "app-build keeps the step names Agent Runway maps" '^checkout check-application test registry build manifest result$' "$(line app-build tasks)"
 expect "app-build takes Agent Runway's parameters" '^release project repository ref applicationSha256 runtime platforms$' "$(line app-build parameters)"
 build_yaml=$(cat charts/delivery/files/app-build.yaml)
+# ssh stops with "No user exists for uid" unless /etc/passwd names the step's user.
+checkout_uid=$(yq '.spec.templates[] | select(.name == "checkout") | .container.securityContext.runAsUser' <<<"$build_yaml")
+expect "the checkout user has a passwd entry" "^[a-z]+:x:${checkout_uid}:" \
+  "$(yq 'select(.kind == "ConfigMap" and .metadata.name == "delivery-passwd") | .data.passwd' <<<"$delivery")"
+expect "checkout reads that passwd file" '^delivery-passwd /etc/passwd passwd$' \
+  "$(yq '.spec.templates[] | select(.name == "checkout") | (.volumes[] | select(.name == "passwd") | .configMap.name) + " " + (.container.volumeMounts[] | select(.name == "passwd") | .mountPath + " " + .subPath)' <<<"$build_yaml")"
 expect "app-build builds arm64 alone by default" "value: '\\[\"linux/arm64\"\\]'" "$build_yaml"
 expect "each platform builds on a node of its architecture" 'kubernetes.io/arch: "\{\{inputs.parameters.arch\}\}"' "$build_yaml"
 expect "steps run one at a time on the ReadWriteOnce work volume" '^      parallelism: 1$' "$build_yaml"
