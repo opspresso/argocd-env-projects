@@ -3,5 +3,4 @@ app:
   tenant:
     project: other
     environment: staging
-    environments: [dev, staging, prod]
     domain: agrt.dev

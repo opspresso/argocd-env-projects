@@ -21,8 +21,8 @@ Argo CD 객체는 [argocd-env-addons](https://github.com/opspresso/argocd-env-ad
 - AppProject `projects`: `app-*` namespace(단, `app-delivery` 제외)에 `charts/app`이 만드는 종류와 플랫폼 kro 인스턴스 종류만 허용합니다.
 - AppProject `delivery`: `app-delivery` namespace(CronWorkflow 포함)와 `delivery-verify` ClusterRole만 허용합니다.
 - Application `app-delivery`: `charts/delivery`를 동기화합니다.
-- ApplicationSet `projects`: 허용한 환경 목록(`app_delivery.environments`)의 `projects/*/<env>` 디렉터리마다
-  Application `app-<slug>-<env>`를 만듭니다. Application은 `charts/app`(값: `app.yaml`)과 `resources.yaml`을 함께 동기화합니다.
+- ApplicationSet `projects`: `projects/<slug>/<env>` 디렉터리마다 Application `app-<slug>-<env>`를 만듭니다.
+  환경 목록을 따로 두지 않습니다. Agent Runway가 디렉터리를 쓴 환경이 곧 배포 대상입니다. Application은 `charts/app`(값: `app.yaml`)과 `resources.yaml`을 함께 동기화합니다.
   Project·Environment·namespace·도메인은 디렉터리 경로와 클러스터 설정에서 정하고, `charts/app`의 guard가 검사합니다.
   guard는 값 파일의 `app.raw`로 끌 수 있으므로 보조 방어입니다. 실제 경계는 `app.yaml`을 `deploy` 단계만 고정 매핑 `render.jq`로 쓰고,
   deploy key를 `delivery-git` 단계(`deploy`·`remove`·`write`·`prune`)만 가진다는 점입니다.
@@ -93,7 +93,7 @@ eks-demo 노드는 모두 Spot입니다. `app-build`의 각 단계는 Spot 회�
 | 그 밖의 단계(예: `dev`) | `https://<slug>-<env>.apps.rovr.dev` |
 
 Project가 모든 단계에 환경 이름을 붙이도록 고르면 마지막 단계도 `https://<slug>-<env>.apps.rovr.dev`입니다.
-허용하는 환경 목록은 argocd-env-apps의 `app_delivery.environments`가 정하며 Agent Runway의 환경 이름과 같아야 합니다. 기본값은 `[dev, prod]`입니다.
+환경은 Agent Runway 콘솔에서만 관리합니다. 이 저장소와 argocd-env-apps에는 환경 목록이 없습니다.
 
 인증서와 DNS는 terraform-env-demo `demo/3-alb`가, push 역할은 terraform-env-opsp `demo/8-app-delivery`가 만듭니다.
 
@@ -115,14 +115,10 @@ chart를 바꾸면 다음을 실행합니다. Helm 4와 Python `pyyaml`이 필�
 
 ## 환경 추가
 
-Argo CD가 Application을 만드는 환경 목록은 argocd-env-apps `app_delivery.environments`가 정하고, Agent Runway의 환경은 콘솔에서 관리합니다.
+Agent Runway 콘솔에서 환경을 추가하면 됩니다. 이 저장소와 argocd-env-apps는 바꾸지 않습니다.
 
-1. 사전 점검: 기존 Project slug가 `-<새 환경>`으로 끝나지 않는지 확인합니다. 끝나면 그 Project의 `<slug>.<domain>` 주소가 다른 Project의 새 환경 주소와 겹칩니다.
-   ```bash
-   ls projects | grep -- '-<새 환경>$'   # 출력이 없어야 합니다
-   ```
-   출력이 있으면 환경 이름을 바꾸거나 해당 Project를 먼저 정리합니다. Agent Runway도 부팅 때 같은 충돌을 거절합니다.
-2. argocd-env-apps `app_delivery.environments`와 Agent Runway 콘솔에 같은 이름의 환경을 추가합니다.
-3. 환경을 목록에서 지우면 그 환경의 Application이 지워지고, resources finalizer로 앱과 kro 인스턴스가 함께 삭제됩니다(RDS는 final snapshot만 남고, 객체가 남은 `S3Bucket`은 비울 때까지 삭제되지 않음).
+- Agent Runway는 기존 Project slug가 `-<새 환경>`으로 끝나면 환경 추가를 거절합니다(`host_conflict`). 그 Project의 주소가 다른 Project의 새 환경 주소와 겹치기 때문입니다.
+- 새 환경에 처음 배포하거나 리소스를 만들면 Agent Runway가 `projects/<slug>/<env>` 디렉터리를 쓰고, ApplicationSet이 그 Application을 만듭니다.
+- 환경의 Application은 그 디렉터리가 없어질 때 지워집니다. 서비스와 리소스를 모두 삭제하면 `env-cleanup`이 디렉터리를 지웁니다.
 - 성공·실패한 Workflow는 1일 동안 남습니다. `app-build`·`app-deploy`는 성공·실패와 관계없이 단계 Pod와 로그도 같은 기간 남아
   Agent Runway의 `deployment_logs`로 읽을 수 있습니다. `resource-sync`는 실패한 Workflow의 Pod만 남깁니다.
