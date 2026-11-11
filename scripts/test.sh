@@ -9,7 +9,7 @@ pass() { printf 'ok   %s\n' "$1"; }
 fail() { printf 'FAIL %s\n' "$1"; failures=$((failures + 1)); }
 
 helm dependency build charts/app >/dev/null
-# An app.yaml written before the deploy step recorded the host.
+# A workload values file without a host.
 hostless=$(mktemp); trap 'rm -f "$hostless"' EXIT
 
 # The parameters the projects ApplicationSet sets from the directory path, the allowed environments and the cluster.
@@ -113,9 +113,6 @@ yq 'del(.app.routing.hosts)' tests/app/dev.yaml > "$hostless"
 fails "a workload without a host is refused" "routing.hosts must be exactly" app todo dev "$hostless"
 expect "every environment may be served on <slug>.<domain>" '"todo.apps.rovr.dev"' "$(app todo dev tests/app/dev.yaml --set 'app.routing.hosts[0]=todo.apps.rovr.dev')"
 expect "the last stage may carry its environment name" '"todo-prod.apps.rovr.dev"' "$(app todo prod tests/app/prod.yaml --set 'app.routing.hosts[0]=todo-prod.apps.rovr.dev')"
-# Until argocd-env-apps stops setting them, the ApplicationSet still passes the host and the primary environment.
-expect "the parameters of an older ApplicationSet still render" '"todo-dev.apps.rovr.dev"' \
-  "$(app todo dev "$hostless" --set 'app.routing.hosts[0]=todo-dev.apps.rovr.dev' --set app.tenant.primaryEnvironment=prod)"
 fails "a namespace labelled for another Project is refused" "namespace must be created with the tenant labels" app todo dev tests/app/dev.yaml --set 'app.namespace.labels.opspresso\.com/delivery-project=other'
 fails "an environment that does not own its namespace is refused" "namespace must be created with the tenant labels" app todo dev tests/app/dev.yaml --set app.namespace.create=false
 fails "an unknown environment is refused" "is not one of tenant.environments" app todo staging tests/app/dev.yaml
@@ -140,16 +137,11 @@ for kind in Deployment Service HTTPRoute; do
   refuse "an environment without app.yaml has no $kind" "kind: ${kind}$" "$base"
 done
 
-# Every deployed environment renders: its directory is an allowed environment and its app.yaml a valid workload.
-# An app.yaml written before the deploy step recorded the host has none; until its next Deployment the ApplicationSet
-# of argocd-env-apps gives it the host as a parameter (prod on <slug>.<domain>).
+# Every deployed environment renders: its directory is an allowed environment and its app.yaml a valid workload with
+# the host Agent Runway chose.
 for values in projects/*/*/app.yaml; do
   environment=$(basename "$(dirname "$values")"); project=$(basename "$(dirname "$(dirname "$values")")")
-  set --
-  if [ "$(yq '.app.routing.hosts | length' "$values")" = 0 ]; then
-    if [ "$environment" = prod ]; then set -- --set "app.routing.hosts[0]=${project}.apps.rovr.dev"; else set -- --set "app.routing.hosts[0]=${project}-${environment}.apps.rovr.dev"; fi
-  fi
-  expect "$values deploys its workload" 'kind: Deployment' "$(app "$project" "$environment" "$values" "$@" 2>&1)"
+  expect "$values deploys its workload" 'kind: Deployment' "$(app "$project" "$environment" "$values" 2>&1)"
 done
 
 delivery=$(helm template delivery charts/delivery --namespace app-delivery \
