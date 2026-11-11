@@ -9,49 +9,48 @@ pass() { printf 'ok   %s\n' "$1"; }
 fail() { printf 'FAIL %s\n' "$1"; failures=$((failures + 1)); }
 
 helm dependency build charts/app >/dev/null
+# An app.yaml written before the deploy step recorded the host.
+hostless=$(mktemp); trap 'rm -f "$hostless"' EXIT
 
-# The parameters the projects ApplicationSet sets from the directory path, the environment profile and the cluster.
-# ENVIRONMENTS and PRIMARY are the profile (argocd-env-addons app_delivery); the default is [dev, prod] with prod primary.
+# The parameters the projects ApplicationSet sets from the directory path, the allowed environments and the cluster.
+# ENVIRONMENTS is the list (argocd-env-apps app_delivery.environments); the default is [dev, prod]. The host comes from
+# the values file (app.yaml), where the deploy step wrote the one Agent Runway chose.
 ENVIRONMENTS="dev prod"
-PRIMARY=prod
 app() {
   local project=$1 environment=$2 values=$3; shift 3
-  local host="${project}-${environment}.apps.rovr.dev"
-  [ "$environment" = "$PRIMARY" ] && host="${project}.apps.rovr.dev"
   helm template app charts/app --namespace "app-${project}-${environment}" -f "$values" \
     --set "app.tenant.project=${project}" --set "app.tenant.environment=${environment}" \
-    --set "app.tenant.environments=${ENVIRONMENTS}" --set "app.tenant.primaryEnvironment=${PRIMARY}" \
+    --set "app.tenant.environments=${ENVIRONMENTS}" \
     --set app.tenant.domain=apps.rovr.dev --set app.tenant.cluster=eks-demo \
     --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::123456789012:role/agent-runway-tenant-secrets \
-    --set "app.routing.hosts[0]=${host}" \
     --set "app.namespace.labels.opspresso\.com/delivery-project=${project}" \
     --set "app.namespace.labels.opspresso\.com/delivery-env=${environment}" "$@"
 }
-# Runs a command with another environment profile: profile <environments> <primary> <command...>.
-profile() { local ENVIRONMENTS=$1 PRIMARY=$2; shift 2; "$@"; }
+# Runs a command with another list of allowed environments: profile <environments> <command...>.
+profile() { local ENVIRONMENTS=$1; shift; "$@"; }
 expect() { if grep -qE -- "$2" <<<"$3"; then pass "$1"; else fail "$1"; fi; }
 refuse() { if grep -qE -- "$2" <<<"$3"; then fail "$1"; else pass "$1"; fi; }
 fails() { local name=$1 pattern=$2; shift 2; local out; if out=$("$@" 2>&1); then fail "$name (rendered)"; elif grep -q -- "$pattern" <<<"$out"; then pass "$name"; else fail "$name ($out)"; fi; }
 
 # The deploy step renders the values with charts/delivery/files/render.jq; the fixtures must be its output.
 render() {
-  jq -n --argjson application "$1" --arg deployment 11111111-1111-4111-8111-111111111111 \
+  jq -n --argjson application "$1" --arg deployment 11111111-1111-4111-8111-111111111111 --arg host "$3" \
     --arg image "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo@sha256:$2" -f charts/delivery/files/render.jq | yq -p json -o yaml
 }
 DEV_APP='{"runtime":{"port":8080,"health":"/health","build":{"context":".","dockerfile":"Dockerfile"}},"environment":{"replicas":1,"maxReplicas":1,"cpu":"100m","memory":"256Mi","architecture":"arm64","resources":[],"secrets":[],"env":{"LOG_LEVEL":"debug"}},"config":{"PGHOST":"db.app-todo-dev.svc.cluster.local","PGPORT":"5432"}}'
 PROD_APP='{"runtime":{"port":3000,"health":"/healthz","build":{"context":".","dockerfile":"Dockerfile"},"command":["node"],"args":["server.js"]},"environment":{"replicas":2,"maxReplicas":4,"cpu":"250m","memory":"512Mi","architecture":"amd64","resources":[],"secrets":[],"env":{}}}'
-if diff -q <(render "$DEV_APP" "$(printf 'a%.0s' $(seq 64))") tests/app/dev.yaml >/dev/null \
-  && diff -q <(render "$PROD_APP" "$(printf 'b%.0s' $(seq 64))") tests/app/prod.yaml >/dev/null; then
+if diff -q <(render "$DEV_APP" "$(printf 'a%.0s' $(seq 64))" todo-dev.apps.rovr.dev) tests/app/dev.yaml >/dev/null \
+  && diff -q <(render "$PROD_APP" "$(printf 'b%.0s' $(seq 64))" todo.apps.rovr.dev) tests/app/prod.yaml >/dev/null; then
   pass "fixtures are render.jq output"; else fail "fixtures are render.jq output"; fi
 # environment.architecture picks the nodes: a Deployment without it (before Agent Runway V5) has no constraint.
-no_arch=$(render "$(jq -c 'del(.environment.architecture)' <<<"$DEV_APP")" "$(printf 'a%.0s' $(seq 64))")
+no_arch=$(render "$(jq -c 'del(.environment.architecture)' <<<"$DEV_APP")" "$(printf 'a%.0s' $(seq 64))" todo-dev.apps.rovr.dev)
 refuse "a declaration without architecture has no nodeSelector" 'nodeSelector' "$no_arch"
 refuse "a declaration without architecture has no tolerations" 'tolerations' "$no_arch"
 fails "an unknown architecture is refused" "architecture must be amd64 or arm64" \
-  render "$(jq -c '.environment.architecture = "s390x"' <<<"$DEV_APP")" "$(printf 'a%.0s' $(seq 64))"
+  render "$(jq -c '.environment.architecture = "s390x"' <<<"$DEV_APP")" "$(printf 'a%.0s' $(seq 64))" todo-dev.apps.rovr.dev
 
 dev=$(app todo dev tests/app/dev.yaml)
-expect "dev host is <slug>-dev.<domain>" '"todo-dev.apps.rovr.dev"' "$dev"
+expect "the host is the one app.yaml carries" '"todo-dev.apps.rovr.dev"' "$dev"
 expect "image is pinned by digest" 'projects/todo@sha256:a{64}' "$dev"
 expect "PORT follows runtime.port" 'value: "8080"' "$dev"
 expect "plain env is set" 'name: LOG_LEVEL' "$dev"
@@ -87,9 +86,9 @@ refuse "one replica has no HPA" 'kind: HorizontalPodAutoscaler' "$dev"
 refuse "one replica has no PDB" 'kind: PodDisruptionBudget' "$dev"
 
 prod=$(app todo prod tests/app/prod.yaml -f tests/app/override.yaml)
-expect "prod host is <slug>.<domain>" '"todo.apps.rovr.dev"' "$prod"
+expect "an environment may be served on <slug>.<domain>" '"todo.apps.rovr.dev"' "$prod"
 refuse "an environment without plain Variables has no ConfigMap" 'kind: ConfigMap$' "$prod"
-refuse "a values file cannot claim another domain" 'agrt.dev' "$prod"
+refuse "a values file cannot move the tenant to another domain" 'agrt.dev' "$prod"
 refuse "a values file cannot move the namespace" 'namespace: app-other' "$prod"
 refuse "a values file cannot rename the environment" '/agent-runway/eks-demo/[a-z-]+/dev' "$prod"
 expect "maxReplicas above replicas adds an HPA" 'kind: HorizontalPodAutoscaler' "$prod"
@@ -103,27 +102,34 @@ expect "apps reach the Pod Identity agent" 'cidr: 169.254.170.23/32' "$prod"
 
 fails "a release outside app-<slug>-<env> is refused" "release namespace" \
   helm template app charts/app --namespace app-todo-prod -f tests/app/dev.yaml --set app.tenant.project=todo --set app.tenant.environment=dev \
-  --set 'app.tenant.environments=dev prod' --set app.tenant.primaryEnvironment=prod \
-  --set app.tenant.domain=apps.rovr.dev --set app.tenant.cluster=eks-demo --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::1:role/r --set 'app.routing.hosts[0]=todo-dev.apps.rovr.dev'
-fails "another host is refused" "routing.hosts must be exactly" app todo dev tests/app/dev.yaml --set 'app.routing.hosts[0]=studio.agrt.dev'
+  --set 'app.tenant.environments=dev prod' \
+  --set app.tenant.domain=apps.rovr.dev --set app.tenant.cluster=eks-demo --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::1:role/r
+fails "a host on another domain is refused" "routing.hosts must be exactly" app todo dev tests/app/dev.yaml --set 'app.routing.hosts[0]=studio.agrt.dev'
+fails "a values file cannot claim another domain" "routing.hosts must be exactly" app todo prod tests/app/prod.yaml -f tests/app/override-host.yaml
+fails "another Project's host is refused" "routing.hosts must be exactly" app todo dev tests/app/dev.yaml --set 'app.routing.hosts[0]=shop.apps.rovr.dev'
+fails "another environment's host is refused" "routing.hosts must be exactly" app todo dev tests/app/dev.yaml --set 'app.routing.hosts[0]=todo-prod.apps.rovr.dev'
+fails "a second host is refused" "routing.hosts must be exactly" app todo dev tests/app/dev.yaml --set 'app.routing.hosts[1]=todo.apps.rovr.dev'
+yq 'del(.app.routing.hosts)' tests/app/dev.yaml > "$hostless"
+fails "a workload without a host is refused" "routing.hosts must be exactly" app todo dev "$hostless"
+expect "every environment may be served on <slug>.<domain>" '"todo.apps.rovr.dev"' "$(app todo dev tests/app/dev.yaml --set 'app.routing.hosts[0]=todo.apps.rovr.dev')"
+expect "the last stage may carry its environment name" '"todo-prod.apps.rovr.dev"' "$(app todo prod tests/app/prod.yaml --set 'app.routing.hosts[0]=todo-prod.apps.rovr.dev')"
+# Until argocd-env-apps stops setting them, the ApplicationSet still passes the host and the primary environment.
+expect "the parameters of an older ApplicationSet still render" '"todo-dev.apps.rovr.dev"' \
+  "$(app todo dev "$hostless" --set 'app.routing.hosts[0]=todo-dev.apps.rovr.dev' --set app.tenant.primaryEnvironment=prod)"
 fails "a namespace labelled for another Project is refused" "namespace must be created with the tenant labels" app todo dev tests/app/dev.yaml --set 'app.namespace.labels.opspresso\.com/delivery-project=other'
 fails "an environment that does not own its namespace is refused" "namespace must be created with the tenant labels" app todo dev tests/app/dev.yaml --set app.namespace.create=false
-fails "a non-primary environment cannot claim <slug>.<domain>" "routing.hosts must be exactly" app todo dev tests/app/dev.yaml --set 'app.routing.hosts[0]=todo.apps.rovr.dev'
 fails "an unknown environment is refused" "is not one of tenant.environments" app todo staging tests/app/dev.yaml
-# tests/app/override.yaml lists staging and makes it primary; the ApplicationSet parameters replace both.
+# tests/app/override.yaml lists staging; the ApplicationSet parameter replaces the list.
 fails "a values file cannot add an environment" "is not one of tenant.environments" app todo staging tests/app/override.yaml
-fails "an invalid environment name is refused" "invalid name" profile "dev Prod" prod app todo dev tests/app/dev.yaml
-fails "the primary environment must be in the profile" "primaryEnvironment" profile "dev prod" live app todo dev tests/app/dev.yaml
+fails "an invalid environment name is refused" "invalid name" profile "dev Prod" app todo dev tests/app/dev.yaml
 fails "a slug that ends with an environment is refused" "must not end with -dev" app todo-dev prod tests/app/prod.yaml
 fails "a tag instead of a digest is refused" "pin the image by digest" app todo dev tests/app/dev.yaml --set app.image.reference=nginx:latest
 fails "an invalid slug is refused" "not an Agent Runway Project slug" app Todo dev tests/app/dev.yaml
 
-# A profile with more environments: each has its own namespace and host; the primary one is <slug>.<domain>.
-staging=$(profile "dev staging prod" prod app todo staging tests/app/dev.yaml)
+# A list with more environments: each has its own namespace, Variables and hosts.
+staging=$(profile "dev staging prod" app todo staging tests/app/dev.yaml --set 'app.routing.hosts[0]=todo-staging.apps.rovr.dev')
 expect "an added environment is served on <slug>-<env>.<domain>" '"todo-staging.apps.rovr.dev"' "$staging"
 expect "an added environment reads its own Variables" "path: '?/agent-runway/eks-demo/todo/staging'?$" "$staging"
-live=$(profile "dev live" live app todo live tests/app/prod.yaml)
-expect "the primary environment is served on <slug>.<domain>" '"todo.apps.rovr.dev"' "$live"
 
 # Before the first deployment (no app.yaml) the environment has its tenant objects only, so resources.yaml can use app-env.
 base=$(app todo dev /dev/null)
@@ -135,9 +141,15 @@ for kind in Deployment Service HTTPRoute; do
 done
 
 # Every deployed environment renders: its directory is an allowed environment and its app.yaml a valid workload.
+# An app.yaml written before the deploy step recorded the host has none; until its next Deployment the ApplicationSet
+# of argocd-env-apps gives it the host as a parameter (prod on <slug>.<domain>).
 for values in projects/*/*/app.yaml; do
   environment=$(basename "$(dirname "$values")"); project=$(basename "$(dirname "$(dirname "$values")")")
-  expect "$values deploys its workload" 'kind: Deployment' "$(app "$project" "$environment" "$values" 2>&1)"
+  set --
+  if [ "$(yq '.app.routing.hosts | length' "$values")" = 0 ]; then
+    if [ "$environment" = prod ]; then set -- --set "app.routing.hosts[0]=${project}.apps.rovr.dev"; else set -- --set "app.routing.hosts[0]=${project}-${environment}.apps.rovr.dev"; fi
+  fi
+  expect "$values deploys its workload" 'kind: Deployment' "$(app "$project" "$environment" "$values" "$@" 2>&1)"
 done
 
 delivery=$(helm template delivery charts/delivery --namespace app-delivery \

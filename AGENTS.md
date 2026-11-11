@@ -13,8 +13,7 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   rename these files by hand; change the app's `application.yaml` or its resources in Agent Runway instead.
 - `charts/app` and `charts/delivery` change through reviewed pull requests.
 - The Argo CD AppProjects, the `app-delivery` Application, the `projects` ApplicationSet and the allowed environment
-  list (`app_delivery.environments`, `app_delivery.primary_environment`) live in
-  `argocd-env-addons` (`charts/argo-cd`). Change them there.
+  list (`app_delivery.environments`) live in `argocd-env-apps` (`charts/agent-runway`, `env/`). Change them there.
 
 ## Invariants
 
@@ -23,10 +22,12 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   `networkPolicy`, `resourceQuota`). The environment namespace is one of them, so Argo CD deletes it with the
   Application; the ApplicationSet must not use `CreateNamespace`, whose namespaces Argo CD never deletes. Only the guard, which has no `app` chart setting, lives in `app.raw.parentTemplates`.
 - The ApplicationSet creates one Application per `projects/<slug>/<env>` directory of an allowed environment. It sets
-  `app.tenant.*` (project, environment, environments, primaryEnvironment, domain, cluster, region,
-  tenantSecretsRoleArn), `app.routing.hosts` and the project and environment labels of `app.namespace` as Helm
-  parameters from the directory path and the cluster. The guard template refuses an environment outside the list, any
-  other namespace or host, a namespace without its tenant labels, and a workload image without a digest. The guard is defense in depth: a values file could set `app.raw` and turn it off. The boundary is that only
+  `app.tenant.*` (project, environment, environments, domain, cluster, region, tenantSecretsRoleArn) and the project
+  and environment labels of `app.namespace` as Helm parameters from the directory path and the cluster. Agent Runway
+  chooses the host of a Project environment; the `deploy` step checks its form and writes it to `app.routing.hosts`
+  in `app.yaml`. The guard template refuses an environment outside the list, any other namespace, a host that is not
+  `<project>.<domain>` or `<project>-<environment>.<domain>`, a workload without a host, a namespace without its tenant
+  labels, and a workload image without a digest. The guard is defense in depth: a values file could set `app.raw` and turn it off. The boundary is that only
   the `deploy` step writes `app.yaml`, through the fixed `render.jq` mapping, with a deploy key that only the
   `delivery-git` steps (`deploy`, `remove`, `write`, `prune`) hold. Keep both, and never let other content reach the values files.
 - `app.tenant.environments` is a space-separated string, not a list: a values file could add items to a list

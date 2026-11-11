@@ -1,0 +1,4 @@
+# A values file must not give the app a host outside its Project environment: the guard refuses it.
+app:
+  routing:
+    hosts: [studio.agrt.dev]
