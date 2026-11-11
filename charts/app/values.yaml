@@ -52,11 +52,9 @@ app:
   tenant:
     project: ""
     environment: ""
-    # The allowed environments (space separated), from app_delivery in argocd-env-apps (Agent Runway's environments).
-    # A string, not a list: a values file could add items to a list parameter. Agent Runway chooses the host of a
-    # Project environment, <project>.<domain> or <project>-<environment>.<domain>, and app.yaml carries it in
+    # Agent Runway owns the environments: every projects/<slug>/<env> directory it writes is one. It chooses the host of
+    # a Project environment, <project>.<domain> or <project>-<environment>.<domain>, and app.yaml carries it in
     # routing.hosts; the guard refuses any other host.
-    environments: ""
     domain: ""
     cluster: ""
     region: ap-northeast-2
@@ -163,16 +161,14 @@ app:
   raw:
     enabled: true
     parentTemplates:
-      # Guard: renders nothing, and refuses a release that is not exactly app-<project>-<env> of an allowed environment,
-      # a host that is not one of the Project environment's two hosts, a workload without a host, and a workload whose
-      # image is not pinned by digest.
+      # Guard: renders nothing, and refuses a release that is not exactly app-<project>-<env> of an Agent Runway
+      # environment name, a host that is not one of the Project environment's two hosts, a workload without a host, and
+      # a workload whose image is not pinned by digest. An environment name has no hyphen, so the namespace names one
+      # Project and one environment.
       - |
         {{- $t := .Values.tenant }}
-        {{- $envs := splitList " " (toString ($t.environments | default "")) | compact }}
         {{- if not (regexMatch "^[a-z][a-z0-9-]{1,30}[a-z0-9]$" ($t.project | default "")) }}{{ fail (printf "tenant.project %q is not an Agent Runway Project slug" $t.project) }}{{ end }}
-        {{- range $envs }}{{ if not (regexMatch "^[a-z][a-z0-9]{1,11}$" .) }}{{ fail (printf "tenant.environments has an invalid name %q" .) }}{{ end }}{{ end }}
-        {{- if not (has $t.environment $envs) }}{{ fail (printf "tenant.environment %q is not one of tenant.environments %v" $t.environment $envs) }}{{ end }}
-        {{- range $envs }}{{ if hasSuffix (printf "-%s" .) $t.project }}{{ fail (printf "tenant.project %q must not end with -%s: its host would collide with another environment" $t.project .) }}{{ end }}{{ end }}
+        {{- if not (regexMatch "^[a-z][a-z0-9]{1,11}$" ($t.environment | default "")) }}{{ fail (printf "tenant.environment %q is not an Agent Runway environment name" $t.environment) }}{{ end }}
         {{- if ne .Release.Namespace (printf "app-%s-%s" $t.project $t.environment) }}{{ fail (printf "release namespace %q must be app-%s-%s" .Release.Namespace $t.project $t.environment) }}{{ end }}
         {{- $labels := .Values.namespace.labels | default dict }}
         {{- if or (not .Values.namespace.create) (ne (toString (index $labels "opspresso.com/delivery-tenant")) "true") (ne (toString (index $labels "opspresso.com/delivery-project")) $t.project) (ne (toString (index $labels "opspresso.com/delivery-env")) $t.environment) (ne (toString (index $labels "pod-security.kubernetes.io/enforce")) "baseline") }}{{ fail (printf "namespace must be created with the tenant labels of app-%s-%s" $t.project $t.environment) }}{{ end }}

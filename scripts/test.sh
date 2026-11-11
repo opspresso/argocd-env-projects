@@ -12,22 +12,17 @@ helm dependency build charts/app >/dev/null
 # A workload values file without a host.
 hostless=$(mktemp); trap 'rm -f "$hostless"' EXIT
 
-# The parameters the projects ApplicationSet sets from the directory path, the allowed environments and the cluster.
-# ENVIRONMENTS is the list (argocd-env-apps app_delivery.environments); the default is [dev, prod]. The host comes from
-# the values file (app.yaml), where the deploy step wrote the one Agent Runway chose.
-ENVIRONMENTS="dev prod"
+# The parameters the projects ApplicationSet sets from the directory path and the cluster. The host comes from the
+# values file (app.yaml), where the deploy step wrote the one Agent Runway chose.
 app() {
   local project=$1 environment=$2 values=$3; shift 3
   helm template app charts/app --namespace "app-${project}-${environment}" -f "$values" \
     --set "app.tenant.project=${project}" --set "app.tenant.environment=${environment}" \
-    --set "app.tenant.environments=${ENVIRONMENTS}" \
     --set app.tenant.domain=apps.rovr.dev --set app.tenant.cluster=eks-demo \
     --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::123456789012:role/agent-runway-tenant-secrets \
     --set "app.namespace.labels.opspresso\.com/delivery-project=${project}" \
     --set "app.namespace.labels.opspresso\.com/delivery-env=${environment}" "$@"
 }
-# Runs a command with another list of allowed environments: profile <environments> <command...>.
-profile() { local ENVIRONMENTS=$1; shift; "$@"; }
 expect() { if grep -qE -- "$2" <<<"$3"; then pass "$1"; else fail "$1"; fi; }
 refuse() { if grep -qE -- "$2" <<<"$3"; then fail "$1"; else pass "$1"; fi; }
 fails() { local name=$1 pattern=$2; shift 2; local out; if out=$("$@" 2>&1); then fail "$name (rendered)"; elif grep -q -- "$pattern" <<<"$out"; then pass "$name"; else fail "$name ($out)"; fi; }
@@ -102,7 +97,6 @@ expect "apps reach the Pod Identity agent" 'cidr: 169.254.170.23/32' "$prod"
 
 fails "a release outside app-<slug>-<env> is refused" "release namespace" \
   helm template app charts/app --namespace app-todo-prod -f tests/app/dev.yaml --set app.tenant.project=todo --set app.tenant.environment=dev \
-  --set 'app.tenant.environments=dev prod' \
   --set app.tenant.domain=apps.rovr.dev --set app.tenant.cluster=eks-demo --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::1:role/r
 fails "a host on another domain is refused" "routing.hosts must be exactly" app todo dev tests/app/dev.yaml --set 'app.routing.hosts[0]=studio.agrt.dev'
 fails "a values file cannot claim another domain" "routing.hosts must be exactly" app todo prod tests/app/prod.yaml -f tests/app/override-host.yaml
@@ -115,18 +109,19 @@ expect "every environment may be served on <slug>.<domain>" '"todo.apps.rovr.dev
 expect "the last stage may carry its environment name" '"todo-prod.apps.rovr.dev"' "$(app todo prod tests/app/prod.yaml --set 'app.routing.hosts[0]=todo-prod.apps.rovr.dev')"
 fails "a namespace labelled for another Project is refused" "namespace must be created with the tenant labels" app todo dev tests/app/dev.yaml --set 'app.namespace.labels.opspresso\.com/delivery-project=other'
 fails "an environment that does not own its namespace is refused" "namespace must be created with the tenant labels" app todo dev tests/app/dev.yaml --set app.namespace.create=false
-fails "an unknown environment is refused" "is not one of tenant.environments" app todo staging tests/app/dev.yaml
-# tests/app/override.yaml lists staging; the ApplicationSet parameter replaces the list.
-fails "a values file cannot add an environment" "is not one of tenant.environments" app todo staging tests/app/override.yaml
-fails "an invalid environment name is refused" "invalid name" profile "dev Prod" app todo dev tests/app/dev.yaml
-fails "a slug that ends with an environment is refused" "must not end with -dev" app todo-dev prod tests/app/prod.yaml
+# tests/app/override.yaml names another Project and environment; the ApplicationSet parameters replace both.
+expect "a values file cannot move the app to another environment" "path: '?/agent-runway/eks-demo/todo/dev'?$" "$(app todo dev tests/app/dev.yaml -f tests/app/override.yaml)"
+fails "an environment name with a hyphen is refused" "not an Agent Runway environment name" app todo dev-2 tests/app/dev.yaml
+fails "an environment name in another form is refused" "not an Agent Runway environment name" app todo Prod tests/app/prod.yaml
+# The ApplicationSet of an older argocd-env-apps still passes the allowed list; the chart ignores it.
+expect "the parameter of an older ApplicationSet still renders" '"todo-dev.apps.rovr.dev"' "$(app todo dev tests/app/dev.yaml --set 'app.tenant.environments=dev prod')"
 fails "a tag instead of a digest is refused" "pin the image by digest" app todo dev tests/app/dev.yaml --set app.image.reference=nginx:latest
 fails "an invalid slug is refused" "not an Agent Runway Project slug" app Todo dev tests/app/dev.yaml
 
-# A list with more environments: each has its own namespace, Variables and hosts.
-staging=$(profile "dev staging prod" app todo staging tests/app/dev.yaml --set 'app.routing.hosts[0]=todo-staging.apps.rovr.dev')
-expect "an added environment is served on <slug>-<env>.<domain>" '"todo-staging.apps.rovr.dev"' "$staging"
-expect "an added environment reads its own Variables" "path: '?/agent-runway/eks-demo/todo/staging'?$" "$staging"
+# Every environment Agent Runway has: each has its own namespace, Variables and hosts.
+staging=$(app todo staging tests/app/dev.yaml --set 'app.routing.hosts[0]=todo-staging.apps.rovr.dev')
+expect "another environment is served on <slug>-<env>.<domain>" '"todo-staging.apps.rovr.dev"' "$staging"
+expect "another environment reads its own Variables" "path: '?/agent-runway/eks-demo/todo/staging'?$" "$staging"
 
 # Before the first deployment (no app.yaml) the environment has its tenant objects only, so resources.yaml can use app-env.
 base=$(app todo dev /dev/null)
