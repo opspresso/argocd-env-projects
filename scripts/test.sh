@@ -38,11 +38,17 @@ render() {
   jq -n --argjson application "$1" --arg deployment 11111111-1111-4111-8111-111111111111 \
     --arg image "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo@sha256:$2" -f charts/delivery/files/render.jq | yq -p json -o yaml
 }
-DEV_APP='{"runtime":{"port":8080,"health":"/health","build":{"context":".","dockerfile":"Dockerfile"}},"environment":{"replicas":1,"maxReplicas":1,"cpu":"100m","memory":"256Mi","resources":[],"secrets":[],"env":{"LOG_LEVEL":"debug"}},"config":{"PGHOST":"db.app-todo-dev.svc.cluster.local","PGPORT":"5432"}}'
-PROD_APP='{"runtime":{"port":3000,"health":"/healthz","build":{"context":".","dockerfile":"Dockerfile"},"command":["node"],"args":["server.js"]},"environment":{"replicas":2,"maxReplicas":4,"cpu":"250m","memory":"512Mi","resources":[],"secrets":[],"env":{}}}'
+DEV_APP='{"runtime":{"port":8080,"health":"/health","build":{"context":".","dockerfile":"Dockerfile"}},"environment":{"replicas":1,"maxReplicas":1,"cpu":"100m","memory":"256Mi","architecture":"arm64","resources":[],"secrets":[],"env":{"LOG_LEVEL":"debug"}},"config":{"PGHOST":"db.app-todo-dev.svc.cluster.local","PGPORT":"5432"}}'
+PROD_APP='{"runtime":{"port":3000,"health":"/healthz","build":{"context":".","dockerfile":"Dockerfile"},"command":["node"],"args":["server.js"]},"environment":{"replicas":2,"maxReplicas":4,"cpu":"250m","memory":"512Mi","architecture":"amd64","resources":[],"secrets":[],"env":{}}}'
 if diff -q <(render "$DEV_APP" "$(printf 'a%.0s' $(seq 64))") tests/app/dev.yaml >/dev/null \
   && diff -q <(render "$PROD_APP" "$(printf 'b%.0s' $(seq 64))") tests/app/prod.yaml >/dev/null; then
   pass "fixtures are render.jq output"; else fail "fixtures are render.jq output"; fi
+# environment.architecture picks the nodes: a Deployment without it (before Agent Runway V5) has no constraint.
+no_arch=$(render "$(jq -c 'del(.environment.architecture)' <<<"$DEV_APP")" "$(printf 'a%.0s' $(seq 64))")
+refuse "a declaration without architecture has no nodeSelector" 'nodeSelector' "$no_arch"
+refuse "a declaration without architecture has no tolerations" 'tolerations' "$no_arch"
+fails "an unknown architecture is refused" "architecture must be amd64 or arm64" \
+  render "$(jq -c '.environment.architecture = "s390x"' <<<"$DEV_APP")" "$(printf 'a%.0s' $(seq 64))"
 
 dev=$(app todo dev tests/app/dev.yaml)
 expect "dev host is <slug>-dev.<domain>" '"todo-dev.apps.rovr.dev"' "$dev"
@@ -75,6 +81,8 @@ expect "the ResourceQuota allows two RdsPostgres instances" 'count/rdspostgres.k
 expect "the ResourceQuota allows two S3Bucket instances" 'count/s3buckets.kro.run: "2"' "$dev"
 expect "the ResourceQuota allows two DynamoTable instances" 'count/dynamotables.kro.run: "2"' "$dev"
 expect "the ResourceQuota bounds volumes" 'persistentvolumeclaims: "4"' "$dev"
+expect "arm64 Pods run on arm64 nodes" 'kubernetes.io/arch: "?arm64"?$' "$dev"
+refuse "arm64 Pods do not tolerate the amd64 NodePool" 'opspresso.com/arch' "$dev"
 refuse "one replica has no HPA" 'kind: HorizontalPodAutoscaler' "$dev"
 refuse "one replica has no PDB" 'kind: PodDisruptionBudget' "$dev"
 
@@ -89,6 +97,8 @@ expect "HPA keeps the declared minimum" 'minReplicas: 2' "$prod"
 expect "two replicas add a PDB" 'kind: PodDisruptionBudget' "$prod"
 expect "command is set" 'command:' "$prod"
 expect "health path is probed" 'path: /healthz' "$prod"
+expect "amd64 Pods run on amd64 nodes" 'kubernetes.io/arch: "?amd64"?$' "$prod"
+expect "amd64 Pods tolerate the amd64 NodePool taint" 'key: "?opspresso.com/arch"?$' "$prod"
 expect "apps reach the Pod Identity agent" 'cidr: 169.254.170.23/32' "$prod"
 
 fails "a release outside app-<slug>-<env> is refused" "release namespace" \

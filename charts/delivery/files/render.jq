@@ -2,11 +2,15 @@
 # normalized declaration. Inputs: $application (JSON {runtime, environment, config}), $deployment, $image (pinned by digest).
 # `config` is the environment's Variables that are not secret, as Agent Runway holds them when it submits the Deployment;
 # they reach the Pods through the chart's ConfigMap. Secret Variables reach them through ExternalSecret app-env.
+# `environment.architecture` (amd64 or arm64) is the architecture of the Release image: the Pods run only on nodes of
+# that architecture, and amd64 Pods tolerate the taint of the amd64 NodePool. Without it the Pods have no constraint.
 ($application.runtime) as $r
 | ($application.environment) as $e
 | ($e.maxReplicas // $e.replicas) as $max
 | ($application.config // {}) as $config
 | { path: $r.health, port: "http" } as $probe
+| ($e.architecture // null) as $arch
+| if $arch == null or $arch == "amd64" or $arch == "arm64" then . else error("architecture must be amd64 or arm64, not \($arch)") end
 | {
     deployment: $deployment,
     app: (
@@ -38,5 +42,8 @@
       + (if $r.args then { args: $r.args } else {} end)
       + (if $max > 1 then { topologySpreadConstraints: [{ maxSkew: 1, topologyKey: "kubernetes.io/hostname",
           whenUnsatisfiable: "ScheduleAnyway", labelSelector: { matchLabels: { "app.kubernetes.io/name": "app" } } }] } else {} end)
+      + (if $arch then { nodeSelector: { "kubernetes.io/arch": $arch } } else {} end)
+      + (if $arch == "amd64" then { tolerations: [{ key: "opspresso.com/arch", operator: "Equal", value: "amd64",
+          effect: "NoSchedule" }] } else {} end)
     )
   }
