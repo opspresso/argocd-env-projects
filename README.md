@@ -90,7 +90,7 @@ Agent Runway의 `RUNWAY_ENVIRONMENTS`와 같아야 합니다. 기본값은 `[dev
 | primary(기본 `prod`) | `https://<slug>.apps.rovr.dev` |
 | 그 밖의 환경(예: `dev`) | `https://<slug>-<env>.apps.rovr.dev` |
 
-인증서와 DNS는 terraform-env-demo `demo/3-alb`가, push 역할은 terraform-env-apps `demo/8-app-delivery`가 만듭니다.
+인증서와 DNS는 terraform-env-demo `demo/3-alb`가, push 역할은 terraform-env-opsp `demo/8-app-delivery`가 만듭니다.
 
 ## 변경과 검증
 
