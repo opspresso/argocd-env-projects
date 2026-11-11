@@ -31,7 +31,8 @@ spec:
       # The Release image: <registry>/<project>@sha256:<digest>.
       - name: image
       # The declaration of this environment with defaults filled in (JSON {runtime, environment, config}). Agent Runway
-      # resolves the Project's size into environment.instanceType, replicas (minimum instances) and maxReplicas.
+      # resolves the Project's size into environment.instanceType, replicas (minimum instances) and maxReplicas, and
+      # sets environment.rollout to "all-at-once" in a sandbox environment.
       - name: application
       - name: host
       # The Target without secrets (JSON): kind aws-eb, account, region, deployRole, artifactBucket, solutionStack,
@@ -50,9 +51,10 @@ spec:
             depends: deploy
 
     # Writes the source bundle (with the Target's install script, if any) and creates or updates the stack
-    # runway-<project>-<environment> in the Target account. CloudFormation rolls a failed update back, and the Immutable
-    # policy replaces instances only after the new ones pass the health check, so a failed Deployment (also a failed
-    # install script) leaves the previous Release running.
+    # runway-<project>-<environment> in the Target account. CloudFormation rolls a failed update back. With the
+    # Immutable rollout, instances are replaced only after the new ones pass the health check, so a failed Deployment
+    # (also a failed install script) leaves the previous Release running. With the AllAtOnce rollout of a sandbox
+    # environment the app is down while the instances take the Release, and after a failure until the rollback ends.
     - name: deploy
       serviceAccountName: delivery-target
       activeDeadlineSeconds: 3300
@@ -79,6 +81,7 @@ spec:
             stack="runway-${PROJECT}-${ENVIRONMENT}"
             secrets_path="/agent-runway/$(field name)/${PROJECT}/${ENVIRONMENT}"
             instance_type=$(instance_type)
+            rollout=$(rollout)
             min=$(printf '%s' "$APPLICATION" | jq -r '.environment.replicas // 1')
             max=$(printf '%s' "$APPLICATION" | jq -r '.environment.maxReplicas // .environment.replicas // 1')
             health=$(printf '%s' "$APPLICATION" | jq -r '.runtime.health // "/health"')
@@ -107,7 +110,7 @@ spec:
                 "VersionBucket=$(field artifactBucket)" "VersionKey=${key}" "VpcId=$(field vpcId)" \
                 "InstanceSubnets=$(list instanceSubnets)" "LoadBalancerSubnets=$(list loadBalancerSubnets)" \
                 "CertificateArn=$(field certificateArn)" "HostedZoneId=$(field hostedZoneId)" "Host=${HOST}" \
-                "InstanceType=${instance_type}" "MinSize=${min}" "MaxSize=${max}" "HealthPath=${health}" \
+                "InstanceType=${instance_type}" "MinSize=${min}" "MaxSize=${max}" "HealthPath=${health}" "Rollout=${rollout}" \
                 "SecretsPath=${secrets_path}" "SecretsKeyArn=$(field secretsKeyArn)" \
                 "RepositoryArn=arn:aws:ecr:${registry_region}:${registry_account}:repository/${REGISTRY#*/}/${PROJECT}" \
               || { aws cloudformation describe-stack-events --stack-name "$stack" --max-items 20 \

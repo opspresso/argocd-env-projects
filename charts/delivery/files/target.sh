@@ -55,6 +55,18 @@ instance_type() {
     || { echo "application field environment.instanceType is missing or is not an instance type" >&2; exit 1; }
 }
 
+# How this Project environment replaces a running Release, as the Elastic Beanstalk deployment policy. Agent Runway sets
+# application.environment.rollout: "all-at-once" in a sandbox environment (every instance takes the new Release at
+# once; the app is down meanwhile), "immutable" or nothing elsewhere (new instances replace the old ones only when
+# they pass the health check).
+rollout() {
+  case "$(printf '%s' "$APPLICATION" | jq -r '.environment.rollout // "immutable" | tostring')" in
+    immutable) echo Immutable ;;
+    all-at-once) echo AllAtOnce ;;
+    *) echo "application field environment.rollout must be immutable or all-at-once" >&2; exit 1 ;;
+  esac
+}
+
 # Writes the Target's install script (agent-platform docs/DELIVERY_V4.md D5) to the file $1. The file is empty when
 # the Target has none. The script is at most 16 KiB and starts with #!/bin/bash or #!/bin/sh.
 install_script() {
