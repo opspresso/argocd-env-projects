@@ -1,10 +1,10 @@
-# Written by the app-deploy workflow for Deployment 6c98b3c3-a6f1-4f21-b145-eba2617d93c2. Do not edit.
-deployment: 6c98b3c3-a6f1-4f21-b145-eba2617d93c2
+# Written by the app-deploy workflow for Deployment 30784c35-5c6e-4dd4-9363-511871a1f446. Do not edit.
+deployment: 30784c35-5c6e-4dd4-9363-511871a1f446
 app:
   controller:
     enabled: true
   image:
-    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo-valkey@sha256:236a925cfb1250d08fc59f5e8e2fe03693ceb35dc997c0f83c27035bf8ccbc1e
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo-valkey@sha256:00f651043f63cc92835b2efa8a6678116910743e4b0fb5fccbeeb89b688ece4c
   replicaCount: 1
   autoscaling:
     enabled: false
@@ -19,8 +19,6 @@ app:
   env:
     - name: PORT
       value: "8080"
-    - name: LOG_LEVEL
-      value: info
   startupProbe:
     httpGet:
       path: /health
@@ -47,6 +45,15 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: 6c98b3c3-a6f1-4f21-b145-eba2617d93c2
+      force-sync: 30784c35-5c6e-4dd4-9363-511871a1f446
+  configmap:
+    enabled: true
+    data:
+      LOG_LEVEL: info
+      VALKEY_HOST: todo-valkey.app-todo-valkey-dev.svc.cluster.local
+      VALKEY_PORT: "6379"
+      VALKEY_USERNAME: default
   podAnnotations:
-    opspresso.com/deployment: 6c98b3c3-a6f1-4f21-b145-eba2617d93c2
+    opspresso.com/deployment: 30784c35-5c6e-4dd4-9363-511871a1f446
+  nodeSelector:
+    kubernetes.io/arch: arm64
