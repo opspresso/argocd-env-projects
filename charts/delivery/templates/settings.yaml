@@ -44,16 +44,6 @@ data:
     {{ . }}
     {{- end }}
 ---
-# The passwd file of the app-build checkout step: ssh refuses a user without an entry, and the step runs as 1000.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: delivery-passwd
-data:
-  passwd: |
-    root:x:0:0:root:/root:/sbin/nologin
-    checkout:x:1000:1000:checkout:/tmp:/sbin/nologin
----
 # Scripts of the steps: the values renderer of the deploy step (scripts/test.sh checks charts/app against its
 # output), the resource check of resource-sync, the commit that both use, and the Target helpers, source bundle and
 # stack of the aws-eb Workflows.

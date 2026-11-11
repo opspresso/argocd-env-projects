@@ -2,9 +2,6 @@
 # docs/APP_DELIVERY.md). Agent Runway is the only submitter and names the Workflow build-<Release ID>. Every
 # parameter comes from Agent Runway; the source archive only provides the code. Cluster settings come from
 # ConfigMap delivery-settings. Results: revision (commit SHA) and image (<registry>/<project>@sha256:...).
-# It replaces app-build, which clones the repository with a per-Project credential: this one reads the source
-# archive Agent Runway uploaded, so the cluster holds no Git credential. Both stay until Agent Runway submits
-# only this one.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:

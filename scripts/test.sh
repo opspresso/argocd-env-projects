@@ -140,11 +140,11 @@ done
 delivery=$(helm template delivery charts/delivery --namespace app-delivery \
   --set registry=123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects --set pushRoleArn=arn:aws:iam::123456789012:role/app-delivery-push \
   --set 'apiServer.cidrs={172.20.0.1/32,10.10.114.40/32}')
-for name in app-build app-build-v2 app-deploy app-remove app-deploy-eb app-remove-eb resource-sync env-cleanup; do
+for name in app-build-v2 app-deploy app-remove app-deploy-eb app-remove-eb resource-sync env-cleanup; do
   expect "delivery renders WorkflowTemplate $name" "^  name: ${name}$" "$delivery"
 done
-secret_verbs=$(yq 'select(.kind == "Role" and .metadata.name == "agent-runway") | .rules[] | select(.resources[] == "secrets") | .verbs | join(",")' <<<"$delivery")
-if [ "$secret_verbs" = "create" ]; then pass "Agent Runway may only create Secrets"; else fail "Agent Runway may only create Secrets ($secret_verbs)"; fi
+runway_rules=$(yq 'select(.kind == "Role" and .metadata.name == "agent-runway") | .rules[] | (.resources | join(",")) + " " + (.verbs | join(","))' <<<"$delivery" | paste -sd '|' -)
+if [ "$runway_rules" = "workflows create,get,list|pods get,list|pods/log get" ]; then pass "Agent Runway may only submit Workflows and read their Pods and logs"; else fail "Agent Runway may only submit Workflows and read their Pods and logs ($runway_rules)"; fi
 expect "Agent Runway may submit Workflows" 'name: agent-runway' "$delivery"
 for kind in RoleBinding ClusterRoleBinding; do
   name=agent-runway
@@ -176,26 +176,17 @@ expect "Agent Runway reads every platform kro kind" 'resources: \[rdspostgres, s
 
 contract=$(python3 scripts/workflow_contract.py)
 line() { grep -E "^$1 $2( |$)" <<<"$contract" | cut -d' ' -f3-; }
-expect "app-build keeps the step names Agent Runway maps" '^checkout check-application test registry build manifest result$' "$(line app-build tasks)"
-expect "app-build takes Agent Runway's parameters" '^release project repository ref applicationSha256 runtime platforms$' "$(line app-build parameters)"
-build_yaml=$(cat charts/delivery/files/app-build.yaml)
-# ssh stops with "No user exists for uid" unless /etc/passwd names the step's user.
-checkout_uid=$(yq '.spec.templates[] | select(.name == "checkout") | .container.securityContext.runAsUser' <<<"$build_yaml")
-expect "the checkout user has a passwd entry" "^[a-z]+:x:${checkout_uid}:" \
-  "$(yq 'select(.kind == "ConfigMap" and .metadata.name == "delivery-passwd") | .data.passwd' <<<"$delivery")"
-expect "checkout reads that passwd file" '^delivery-passwd /etc/passwd passwd$' \
-  "$(yq '.spec.templates[] | select(.name == "checkout") | (.volumes[] | select(.name == "passwd") | .configMap.name) + " " + (.container.volumeMounts[] | select(.name == "passwd") | .mountPath + " " + .subPath)' <<<"$build_yaml")"
+build_yaml=$(cat charts/delivery/files/app-build-v2.yaml)
 expect "app-build-v2 keeps the step names Agent Runway maps" '^checkout check-application test registry build manifest result$' "$(line app-build-v2 tasks)"
 expect "app-build-v2 takes the source archive and its commit" '^release project source revision applicationSha256 runtime platforms$' "$(line app-build-v2 parameters)"
 expect "app-build-v2 returns revision and image" '^image revision$' "$(line app-build-v2 outputs)"
 expect "builds from an archive are not serialized" '^$' "$(line app-build-v2 mutexes)"
 expect "the archive checkout has its ServiceAccount" '^delivery-source$' "$(yq 'select(.kind == "ServiceAccount" and .metadata.name == "delivery-source") | .metadata.name' <<<"$delivery")"
 expect "the archive checkout reports its result to Argo" 'delivery-source' "$(yq 'select(.kind == "RoleBinding" and .roleRef.name == "delivery-executor") | .subjects[].name' <<<"$delivery")"
-expect "app-build builds arm64 alone by default" "value: '\\[\"linux/arm64\"\\]'" "$build_yaml"
+expect "app-build-v2 builds arm64 alone by default" "value: '\\[\"linux/arm64\"\\]'" "$build_yaml"
 expect "each platform builds on a node of its architecture" 'kubernetes.io/arch: "\{\{inputs.parameters.arch\}\}"' "$build_yaml"
 expect "steps run one at a time on the ReadWriteOnce work volume" '^      parallelism: 1$' "$build_yaml"
 refuse "no platform is emulated" 'qemu|binfmt' "$build_yaml"
-expect "app-build returns revision and image" '^image revision$' "$(line app-build outputs)"
 expect "app-deploy keeps the step names Agent Runway maps" '^deploy verify$' "$(line app-deploy tasks)"
 expect "app-deploy takes Agent Runway's parameters" '^deployment project environment image application host$' "$(line app-deploy parameters)"
 expect "app-deploy returns url" '^url$' "$(line app-deploy outputs)"
@@ -209,9 +200,8 @@ expect "resource-sync takes Agent Runway's parameters" '^sync project environmen
 expect "resource-sync returns nothing" '^$' "$(line resource-sync outputs)"
 expect "one resource sync runs per environment" '^resources-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line resource-sync mutexes)"
 expect "one deployment runs per environment" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line app-deploy mutexes)"
-expect "builds are not serialized" '^$' "$(line app-build mutexes)"
 expect "only deploy, remove, write and prune hold the deploy key, as delivery-git" '^app-deploy:deploy:delivery-git app-remove:remove:delivery-git resource-sync:write:delivery-git env-cleanup:prune:delivery-git$' "$(line all deploy-key)"
-expect "a changed declaration exits 3 for Agent Runway" 'exit 3' "$(cat charts/delivery/files/app-build.yaml)"
+expect "a changed declaration exits 3 for Agent Runway" 'exit 3' "$build_yaml"
 expect "app-deploy-eb keeps app-deploy's step names" '^deploy verify$' "$(line app-deploy-eb tasks)"
 expect "app-deploy-eb takes app-deploy's parameters and the Target" '^deployment project environment image application host target$' "$(line app-deploy-eb parameters)"
 expect "app-deploy-eb returns url" '^url$' "$(line app-deploy-eb outputs)"
@@ -457,7 +447,7 @@ fails "a manifest that is not YAML is refused" "" check <<<"kind: [unclosed"
 
 if command -v argo >/dev/null; then
   # One run: resource-sync and app-remove reference env-cleanup templates.
-  if argo lint --offline charts/delivery/files/{app-build,app-build-v2,app-deploy,app-remove,app-deploy-eb,app-remove-eb,resource-sync,env-cleanup}.yaml >/dev/null; then
+  if argo lint --offline charts/delivery/files/{app-build-v2,app-deploy,app-remove,app-deploy-eb,app-remove-eb,resource-sync,env-cleanup}.yaml >/dev/null; then
     pass "argo lint accepts the WorkflowTemplates"; else fail "argo lint accepts the WorkflowTemplates"; fi
 else
   echo "skip argo lint (argo CLI not installed)"

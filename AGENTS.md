@@ -48,11 +48,11 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   `kubernetes.io/arch`; `amd64` also tolerates the amd64 NodePool taint `opspresso.com/arch=amd64:NoSchedule`. Another value
   fails the deploy step. Without the value the Pods have no scheduling constraint.
 - The app chart renders only the kinds that AppProject `projects` allows. Adding a kind needs a change there too.
-- `charts/delivery/files/{app-build,app-deploy,app-remove,app-deploy-eb,app-remove-eb,resource-sync,env-cleanup}.yaml` are static. Argo's `{{...}}` parameters must not
+- `charts/delivery/files/{app-build-v2,app-deploy,app-remove,app-deploy-eb,app-remove-eb,resource-sync,env-cleanup}.yaml` are static. Argo's `{{...}}` parameters must not
   pass through Helm; cluster values reach the steps through ConfigMap `delivery-settings`, and the shared scripts
   (`render.jq`, `check-resources.sh`, `commit.sh`) through ConfigMap `delivery-scripts`.
 - Keep the WorkflowTemplate names, parameters, results and DAG task names of the Workflow contract in
-  `docs/DELIVERY_V2.md` (`app-build`: `checkout`, `check-application`, `test`, `registry`, `build`; `app-deploy`:
+  `docs/DELIVERY_V2.md` (`app-build-v2`: `checkout`, `check-application`, `test`, `registry`, `build`; `app-deploy`:
   `deploy`, `verify`; `app-remove`: `remove`, `verify`; `resource-sync`: `write`). Agent Runway submits them and maps failed tasks to its steps.
 - `resource-sync` holds the mutex `resources-<project>-<environment>`; `app-deploy` and `app-remove` share
   `deploy-<project>-<environment>`. Argo Workflows v4 accepts only `synchronization.mutexes`.
