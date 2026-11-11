@@ -48,7 +48,7 @@ flowchart LR
 
 | WorkflowTemplate | 단계 | ServiceAccount | 하는 일 |
 | --- | --- | --- | --- |
-| `app-build` | `checkout` | `delivery-git` | 요청한 ref를 clone하고 commit SHA를 기록한다. Secret `<workflow>-checkout`은 그 저장소만 읽는 자격 증명을 담는다. `ssh-key`(GitHub deploy key)가 있으면 고정한 host key로 `git@github.com`을 읽고, `token`(GitLab deploy token)이 있으면 그 host의 요청 header로만 쓴다. 둘 다 비어 있으면 공개 저장소다 |
+| `app-build` | `checkout` | `delivery-source` | 그 Release의 소스 아카이브(`source`, S3)를 풀고 commit SHA(`revision`)를 기록한다. Agent Runway가 배포를 요청한 사람의 Git 권한으로 저장소를 읽어 올린 것이며, 이 단계와 클러스터는 Git 자격 증명을 갖지 않는다. 소스에는 `.git`이 없다 |
 | `app-build` | `check-application` | `delivery-runner` | `application.yaml`이 Agent Runway에 적용한 파일과 같은지 SHA-256으로 확인한다. 다르면 exit code 3이다 |
 | `app-build` | `test` | `delivery-runner` | `runtime.test.image`에서 `runtime.test.command`를 실행한다. 없으면 건너뛴다 |
 | `app-build` | `registry` | `delivery-registry` | ECR repository를 만들고, 같은 Release tag(arm64만이면 `<commit>`, 그 밖에는 `<commit>-<arch>-<arch>`)의 이미지가 있으면 재사용한다. 없으면 그 Project에만 push할 수 있는 credential을 만들고 build할 platform을 정한다 |

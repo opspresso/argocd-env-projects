@@ -85,13 +85,11 @@ print("all delivery-target", " ".join(target_steps))
 build = {t["name"]: t for t in load("app-build")["spec"]["templates"]}
 for task in ("test", "build", "check-application"):
     assert build[task]["executor"]["serviceAccountName"] == "delivery-runner", task
-# Only checkout reads the checkout token Secret, and never through the Git config or the remote URL.
-readers = sorted(n for n, t in build.items() if "-checkout" in yaml.safe_dump(t.get("container", {}).get("env", [])))
-assert readers == ["checkout"], readers
-script = build["checkout"]["container"]["args"][0]
-assert "@github.com" not in script and "x-access-token:%s@" not in script, "token stays out of the URL"
-assert "git config" not in script and "--global" not in script, "token is not stored"
-assert '"http.https://${host}/.extraheader=${header}"' in script and '"https://${host}/${path}.git"' in script, "the header is scoped to the repository's host"
-assert '> "$HOME/key"' in script and "/work/key" not in script, "the deploy key stays out of the work volume"
-assert "StrictHostKeyChecking=yes" in script and "UserKnownHostsFile=/etc/delivery/known_hosts" in script, "SSH trusts only the pinned host keys"
+# checkout unpacks the archive Agent Runway uploaded. No step of the build holds a Git credential or runs git.
+checkout = build["checkout"]
+assert checkout["serviceAccountName"] == "delivery-source", "checkout reads the archive as delivery-source"
+assert [n for n, t in build.items() if "secretKeyRef" in yaml.safe_dump(t.get("container", {}))] == [], "no build step reads a Secret through its environment"
+script = checkout["container"]["args"][0]
+assert "git " not in script and "ssh " not in script, "checkout does not reach a Git host"
+assert 'aws s3 cp --only-show-errors "${SOURCE}"' in script and "s3://*/_sources/*.tar.gz" in script, "checkout reads only a Release source archive"
 

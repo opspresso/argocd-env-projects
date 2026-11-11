@@ -24,8 +24,9 @@ spec:
     parameters:
       - name: release
       - name: project
-      - name: repository
-      - name: ref
+      # The source archive of this Release (s3://<bucket>/<cluster>/_sources/<Release ID>.tar.gz) and its commit SHA.
+      - name: source
+      - name: revision
       - name: applicationSha256
       # The runtime section of the applied declaration, with defaults filled in (JSON).
       - name: runtime
@@ -107,18 +108,12 @@ spec:
             template: result
             depends: "registry && (build.Succeeded || build.Skipped) && (manifest.Succeeded || manifest.Skipped)"
 
-    # Clones the requested ref and records the commit it resolves to. The repository is <host>/<path>
-    # (github.com/owner/repo, gitlab.example.com/group/project); an owner/repo without a host is a github.com repository.
-    # Agent Runway writes Secret <workflow>-checkout before this step runs. Each credential reads only this repository:
-    # - ssh-key: the Project's GitHub deploy key. It reads git@github.com over SSH with the pinned host keys.
-    # - token and username: the Project's GitLab deploy token. It goes only into a one-shot header for that host, and
-    #   redirects are refused so the header never leaves the host.
-    # - all empty: a public repository.
-    # Nothing is stored in /work, which the test and build steps read.
-    # ssh needs a passwd entry for its user. The image has none for user 1000, so ConfigMap delivery-passwd supplies
-    # the file.
+    # Unpacks the source archive of this Release and records its commit. Agent Runway read the repository with the Git
+    # permission of the person who requested the deployment and uploaded the archive; this step and the cluster hold no
+    # Git credential. The archive is a gzip tar with one top-level directory, as GitHub and GitLab produce it, and has
+    # no .git directory.
     - name: checkout
-      serviceAccountName: delivery-git
+      serviceAccountName: delivery-source
       activeDeadlineSeconds: 300
       retryStrategy: &reclaimed
         limit: 2
@@ -126,49 +121,28 @@ spec:
         expression: lastRetry.status == "Error" || lastRetry.exitCode == "143"
         backoff: {duration: 10s}
       container:
-        image: alpine/git:v2.54.0
+        image: alpine/k8s:1.37.1
         command: [sh, -euc]
         args:
           - |
             # Group-writable files let a test image that runs as another user write into the checkout.
             umask 0002
-            # A GitHub owner has no dot, so a first segment with one is a host.
-            case "${REPOSITORY%%/*}" in
-              *.*) host="${REPOSITORY%%/*}"; path="${REPOSITORY#*/}" ;;
-              *) host=github.com; path="${REPOSITORY}" ;;
-            esac
-            case "$host" in ""|*[!a-z0-9.-]*) echo "invalid repository host"; exit 1 ;; esac
-            git init -q /work/src
-            if [ -n "${GIT_SSH_KEY}" ]; then
-              # The pinned host keys cover github.com only.
-              [ "$host" = github.com ] || { echo "a deploy key reads github.com only"; exit 1; }
-              # ssh refuses a group-readable key.
-              (umask 0077; printf '%s\n' "${GIT_SSH_KEY}" > "$HOME/key")
-              GIT_SSH_COMMAND="ssh -i $HOME/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/delivery/known_hosts" \
-                git -C /work/src fetch -q --depth 1 "git@${host}:${path}.git" "${REF}"
-              rm -f "$HOME/key"
-            elif [ -n "${GIT_TOKEN}" ]; then
-              header="AUTHORIZATION: basic $(printf '%s:%s' "${GIT_USER:-x-access-token}" "${GIT_TOKEN}" | base64 | tr -d '\n')"
-              git -C /work/src -c http.followRedirects=false -c "http.https://${host}/.extraheader=${header}" \
-                fetch -q --depth 1 "https://${host}/${path}.git" "${REF}"
-              unset header
-            else
-              git -C /work/src -c http.followRedirects=false fetch -q --depth 1 "https://${host}/${path}.git" "${REF}"
-            fi
-            git -C /work/src checkout -q FETCH_HEAD
-            git -C /work/src rev-parse HEAD > /work/revision
-            echo "Checked out ${REPOSITORY} ${REF} at $(cat /work/revision)"
+            case "${REVISION}" in ""|*[!0-9a-f]*) echo "invalid revision"; exit 1 ;; esac
+            case "${SOURCE}" in s3://*/_sources/*.tar.gz) ;; *) echo "invalid source"; exit 1 ;; esac
+            # A step that runs again after a reclaimed node starts from an empty directory.
+            rm -rf /work/src /work/source.tar.gz
+            mkdir /work/src
+            aws s3 cp --only-show-errors "${SOURCE}" /work/source.tar.gz
+            tar -xzf /work/source.tar.gz -C /work/src --strip-components=1
+            rm /work/source.tar.gz
+            printf '%s\n' "${REVISION}" > /work/revision
+            echo "Unpacked the source at ${REVISION}"
         env:
-          - {name: REPOSITORY, value: "{{workflow.parameters.repository}}"}
-          - {name: REF, value: "{{workflow.parameters.ref}}"}
+          - {name: SOURCE, value: "{{workflow.parameters.source}}"}
+          - {name: REVISION, value: "{{workflow.parameters.revision}}"}
           - {name: HOME, value: /tmp}
-          - name: GIT_TOKEN
-            valueFrom: {secretKeyRef: {name: "{{workflow.name}}-checkout", key: token}}
-          - name: GIT_USER
-            valueFrom: {secretKeyRef: {name: "{{workflow.name}}-checkout", key: username, optional: true}}
-          # Absent before Agent Runway writes deploy keys; the step then uses the token or no credential.
-          - name: GIT_SSH_KEY
-            valueFrom: {secretKeyRef: {name: "{{workflow.name}}-checkout", key: ssh-key, optional: true}}
+          - name: AWS_REGION
+            valueFrom: {configMapKeyRef: {name: delivery-settings, key: AWS_REGION}}
         securityContext: &unprivileged
           runAsUser: 1000
           runAsGroup: 1000
@@ -181,15 +155,6 @@ spec:
           limits: {memory: 512Mi}
         volumeMounts:
           - {name: work, mountPath: /work}
-          - {name: known-hosts, mountPath: /etc/delivery, readOnly: true}
-          - {name: passwd, mountPath: /etc/passwd, subPath: passwd, readOnly: true}
-      volumes:
-        - name: known-hosts
-          configMap:
-            name: delivery-known-hosts
-        - name: passwd
-          configMap:
-            name: delivery-passwd
       outputs:
         parameters:
           - name: revision
