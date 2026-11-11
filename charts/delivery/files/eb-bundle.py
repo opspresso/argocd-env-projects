@@ -1,11 +1,13 @@
 """Writes the Elastic Beanstalk source bundle of one Deployment (app-deploy-eb, agent-platform docs/DELIVERY_V3.md D2).
 
-Usage: eb-bundle.py <application JSON file> <image> <secrets path> <region> <out.zip>
+Usage: eb-bundle.py <application JSON file> <image> <secrets path> <region> <out.zip> [<install script file>]
 
 The bundle holds docker-compose.yml (the Release image pinned by digest, PORT, the non-secret Variables, command and
 args) and a prebuild hook that runs on every instance before the app starts: it logs in to the image's ECR registry and
 writes the environment's secret Variables from SSM into docker-compose.override.yml, so secret values never enter the
-bundle, the stack or the Workflow. Every input comes from Agent Runway; nothing comes from the app repository.
+bundle, the stack or the Workflow. A non-empty install script file (the Target's installScript, agent-platform
+docs/DELIVERY_V4.md D5) becomes the prebuild hook 00-install.sh, which runs before that hook; when it exits non-zero,
+the Elastic Beanstalk deployment fails. Every input comes from Agent Runway; nothing comes from the app repository.
 """
 import json
 import re
@@ -22,7 +24,7 @@ def compose_value(value: str) -> str:
     return json.dumps(value.replace("$", "$$"))
 
 
-def main(application_file: str, image: str, secrets_path: str, region: str, out: str) -> None:
+def main(application_file: str, image: str, secrets_path: str, region: str, out: str, install_file: str = "") -> None:
     with open(application_file) as file:
         application = json.load(file)
     match = IMAGE.match(image)
@@ -66,9 +68,16 @@ for name, value in pairs:
     print("      " + json.dumps(name.rsplit("/", 1)[1]) + ": " + json.dumps(value.replace("$", "$$")))
 ' > docker-compose.override.yml
 """
+    install = b""
+    if install_file:
+        with open(install_file, "rb") as file:  # the administrator's bytes, unchanged
+            install = file.read()
     files = [("docker-compose.yml", compose, 0o100644)]
-    # Elastic Beanstalk runs the hooks of application deployments and of configuration deployments.
-    files += [(f".platform/{kind}/prebuild/01-runway.sh", hook, 0o100755) for kind in ("hooks", "confighooks")]
+    # Elastic Beanstalk runs the hooks of application deployments and of configuration deployments, in name order.
+    for kind in ("hooks", "confighooks"):
+        if install:
+            files.append((f".platform/{kind}/prebuild/00-install.sh", install, 0o100755))
+        files.append((f".platform/{kind}/prebuild/01-runway.sh", hook, 0o100755))
     with zipfile.ZipFile(out, "w") as bundle:
         for name, text, mode in files:
             info = zipfile.ZipInfo(name)
@@ -79,6 +88,6 @@ for name, value in pairs:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 6:
+    if len(sys.argv) not in (6, 7):
         sys.exit(__doc__)
     main(*sys.argv[1:])

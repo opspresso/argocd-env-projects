@@ -23,7 +23,8 @@ spec:
       # The golden image name and version: the AMI is agent-runway-<name>-<version>.
       - name: name
       - name: version
-      # The Target without secrets (JSON): kind aws-asg, name, region, bakeRole, bakeSubnet, architecture.
+      # The Target without secrets (JSON): kind aws-asg, name, region, bakeRole, bakeSubnet, architecture; optional
+      # externalId (a Target in another AWS account).
       - name: target
   templates:
     - name: bake

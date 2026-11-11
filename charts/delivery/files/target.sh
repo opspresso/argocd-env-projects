@@ -1,7 +1,10 @@
-# Shared by the steps of the VM Target Workflows (app-deploy-eb, app-remove-eb). Source it with `.`.
+# Shared by the steps of the VM Target Workflows (app-deploy-eb, app-remove-eb, app-deploy-asg, app-remove-asg,
+# image-bake). Source it with `.`.
 # Checks the parameters, reads the Target JSON and assumes the Target's deploy role. The step's ServiceAccount
 # (delivery-target) may assume only roles named agent-runway-target-deploy and agent-runway-target-bake
 # (terraform-env-demo demo/4-role), and the session tags limit the deploy role to this Project environment's stack.
+# A Target in another AWS account has externalId (agent-platform docs/DELIVERY_V4.md D4), which that account's trust
+# policy requires.
 
 # A Deployment step names a Project environment; the image bake step names none (PROJECT unset).
 if [ -n "${PROJECT:-}" ]; then
@@ -37,12 +40,13 @@ assume_target() {
   role=$(field "$field_name")
   printf '%s' "$role" | grep -qE "^arn:aws:iam::[0-9]{12}:role/agent-runway-target-${suffix}\$" \
     || { echo "Role $role is not an Agent Runway Target ${suffix} role"; exit 1; }
-  if [ -n "${PROJECT:-}" ]; then
-    session=$(aws sts assume-role --role-arn "$role" --role-session-name "$1" --duration-seconds 3600 \
-      --tags "Key=delivery-project,Value=${PROJECT}" "Key=delivery-env,Value=${ENVIRONMENT}" --output json)
-  else
-    session=$(aws sts assume-role --role-arn "$role" --role-session-name "$1" --duration-seconds 3600 --output json)
-  fi
+  external_id=$(printf '%s' "$TARGET" \
+    | jq -er '.externalId // "" | strings | select(. == "" or test("\\A[A-Za-z0-9+=,.@:/-]{2,1224}\\z"))') \
+    || { echo "Target field externalId is not an external ID"; exit 1; }
+  set -- --role-arn "$role" --role-session-name "$1" --duration-seconds 3600
+  [ -n "$external_id" ] && set -- "$@" --external-id "$external_id"
+  [ -n "${PROJECT:-}" ] && set -- "$@" --tags "Key=delivery-project,Value=${PROJECT}" "Key=delivery-env,Value=${ENVIRONMENT}"
+  session=$(aws sts assume-role "$@" --output json)
   AWS_ACCESS_KEY_ID=$(printf '%s' "$session" | jq -r .Credentials.AccessKeyId)
   AWS_SECRET_ACCESS_KEY=$(printf '%s' "$session" | jq -r .Credentials.SecretAccessKey)
   AWS_SESSION_TOKEN=$(printf '%s' "$session" | jq -r .Credentials.SessionToken)
@@ -50,4 +54,30 @@ assume_target() {
   AWS_REGION=$AWS_DEFAULT_REGION
   export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_DEFAULT_REGION AWS_REGION
   unset AWS_ROLE_ARN AWS_WEB_IDENTITY_TOKEN_FILE AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE
+}
+
+# The instance type of this Project environment. Agent Runway resolves the Project's size into
+# application.environment.instanceType (agent-platform docs/DELIVERY_V4.md D3).
+instance_type() {
+  printf '%s' "$APPLICATION" | jq -er '.environment.instanceType | strings | select(test("\\A[a-z][a-z0-9-]*\\.[a-z0-9]+\\z"))' \
+    || { echo "application field environment.instanceType is missing or is not an instance type" >&2; exit 1; }
+}
+
+# Writes the Target's install script (agent-platform docs/DELIVERY_V4.md D5) to the file $1. The file is empty when
+# the Target has none. The script is at most 16 KiB and starts with #!/bin/bash or #!/bin/sh.
+install_script() {
+  printf '%s' "$TARGET" | jq -e '.installScript // "" | strings' >/dev/null \
+    || { echo "Target field installScript must be a string"; exit 1; }
+  printf '%s' "$TARGET" | jq -j '.installScript // ""' > "$1"
+  [ -s "$1" ] || return 0
+  [ $(( $(wc -c < "$1") )) -le 16384 ] || { echo "Target field installScript exceeds 16 KiB"; exit 1; }
+  head -n 1 "$1" | grep -qE '^#!/bin/(bash|sh)( .*)?$' \
+    || { echo "Target field installScript must start with #!/bin/bash or #!/bin/sh"; exit 1; }
+}
+
+# The install script file $1 as base64 of gzip for asg-stack.yaml; nothing when the file is empty. Compressed, a 16 KiB
+# script fits in the 16 KB user data of an instance. mtime=0 keeps the value the same for the same script.
+compressed() {
+  [ -s "$1" ] || return 0
+  python3 -I -c 'import base64, gzip, sys; print(base64.b64encode(gzip.compress(open(sys.argv[1], "rb").read(), 9, mtime=0)).decode())' "$1"
 }

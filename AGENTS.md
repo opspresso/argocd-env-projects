@@ -68,6 +68,11 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   replaces the Auto Scaling group, and CloudFormation keeps the old one unless the new instances signal a healthy app.
   The instances run the Release image with `images/runway-app.py` of the Target's golden image, which passes
   Variables to Docker by name through the environment only.
+- The VM Target steps read the instance type and counts only from `application.environment` (`instanceType`,
+  `replicas`, `maxReplicas`); Agent Runway resolves the Project's size into them (agent-platform `docs/DELIVERY_V4.md`
+  D3). The optional `target.externalId` (D4) goes to every `aws sts assume-role` of `target.sh`. The optional
+  `target.installScript` (D5) runs on each instance before the app: the prebuild hook `00-install.sh` of the EB
+  bundle, or the user data of the aws-asg launch template. A non-zero exit fails the Deployment.
 - `image-bake` builds a golden image (`images/vm-node.pkr.hcl`) with packer in the Target account. Only the Target's
   bake role `agent-runway-target-bake` runs it; no Release is baked into an image.
 
