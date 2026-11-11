@@ -62,21 +62,17 @@ flowchart LR
 | `app-deploy-eb` | `deploy` | `delivery-target` | `aws-eb` Target의 deploy role을 넘겨받는다. source bundle(`eb-bundle.py`: digest 고정 이미지의 `docker-compose.yml`과, 시작할 때 그 환경의 SSM 경로에서 비밀 값을 읽는 hook `01-runway.sh`)을 Target bucket에 올리고 stack `runway-<slug>-<env>`(`eb-stack.yaml`)를 만들거나 갱신한다. Target에 `installScript`가 있으면 bundle의 prebuild hook `00-install.sh`가 되어 `01-runway.sh`보다 먼저 실행된다. 스크립트가 0이 아닌 값으로 끝나면 배포가 실패한다. Immutable 배포이고 실패하면 CloudFormation이 되돌린다 |
 | `app-deploy-eb` | `verify` | `delivery-target` | Elastic Beanstalk 환경이 이 Deployment의 version을 `Ok` health로 실행하고 `https://<host><health>`가 2xx를 반환할 때까지 기다린다 |
 | `app-remove-eb` | `remove`·`verify` | `delivery-target` | stack `runway-<slug>-<env>`를 지우고 없어졌는지 확인한다. 리소스와 Variable은 남긴다 |
-| `app-deploy-asg` | `deploy` | `delivery-target` | `aws-asg` Target의 deploy role로 stack `runway-<slug>-<env>`(`asg-stack.yaml`: 환경 전용 ALB·target group·launch template·Auto Scaling group·DNS)를 만들거나 갱신한다. Target에 `installScript`가 있으면 instance user data가 app을 시작하기 전에 실행한다. 스크립트가 0이 아닌 값으로 끝나면 instance는 app을 시작하지 않고 실패를 signal한다. 새 Deployment는 Auto Scaling group을 교체하고, 새 instance가 healthy app을 signal해야 옛 group을 지운다. 아니면 CloudFormation이 되돌린다 |
-| `app-deploy-asg` | `verify` | `delivery-target` | stack이 이 Deployment를 완료했고 `https://<host><health>`가 2xx를 반환하는지 확인한다 |
-| `app-remove-asg` | `remove`·`verify` | `delivery-target` | stack `runway-<slug>-<env>`를 지우고 없어졌는지 확인한다 |
-| `image-bake` | `build` | `delivery-target` | Target의 bake role로 packer(`images/vm-node.pkr.hcl`)를 실행해 golden image `agent-runway-<name>-<version>`(Amazon Linux 2023, Docker, cfn-signal, `runway-app`)을 만든다. packer는 Session Manager로 build instance에 접속한다. init 단계가 버전과 sha256을 고정한 arm64 `session-manager-plugin`을 받으므로 Pod는 arm64 node에서 실행한다. 결과 `imageId`는 AMI ID다 |
 | `resource-sync` | `write` | `delivery-git` | manifest가 허용한 kro 인스턴스 종류(`resourceKinds`) 또는 chart(`resourceCharts`)이고 그 환경 namespace에 속하는지, 이름이 `^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$`이고 고유한지 확인하고 `projects/<slug>/<env>/resources.yaml`과 `resources/<name>.yaml`을 통째로 바꾼다. 리소스를 모두 지우려면 `{apiVersion: v1, kind: List, items: []}` 문서를 보낸다. 빈 manifest는 거부한다 |
 | `resource-sync` | `cleanup` | `delivery-verify`·`delivery-git` | `env-cleanup`의 `locked`. `deploy-<slug>-<env>` mutex를 잡고 `check-and-prune`을 실행한다 |
 | `env-cleanup` | `scan` | `delivery-verify` | 공개 저장소를 자격 증명 없이 clone하고, `app.yaml`·`resources/<name>.yaml`이 없고 `resources.yaml`에 주석만 있는 환경 디렉터리를 찾는다 |
 | `env-cleanup` | `live` | `delivery-verify` | namespace에 kro 인스턴스(`RESOURCE_KINDS`)·StatefulSet·PVC가 남았는지 확인한다(삭제 중인 객체 포함). 남아 있으면 `not empty yet`을 기록하고 성공한다. API 오류만 실패한다 |
 | `env-cleanup` | `prune` | `delivery-git` | `live`가 남은 객체가 없다고 할 때만 실행한다. `commit.sh PRUNE_EMPTY`로 디렉터리가 여전히 비었으면 지우고, 아니면 `not empty`를 출력하고 아무것도 바꾸지 않는다 |
 
-VM Target Workflow(`app-deploy-eb`·`app-remove-eb`·`app-deploy-asg`·`app-remove-asg`·`image-bake`)는 Agent Runway가 보낸 값만 씁니다.
+VM Target Workflow(`app-deploy-eb`·`app-remove-eb`)는 Agent Runway가 보낸 값만 씁니다.
 
 - instance type과 instance 수: parameter `application`의 `environment.instanceType`, `environment.replicas`(최소), `environment.maxReplicas`(최대). Agent Runway가 Project의 크기 등급을 이 값으로 바꿉니다. `environment.instanceType`이 없거나 instance type 형식이 아니면 `deploy` 단계가 실패합니다.
-- `target.externalId`(선택, `^[A-Za-z0-9+=,.@:/-]{2,1224}$`): 다른 AWS 계정의 Target에 있습니다. `target.sh`가 deploy role과 bake role을 넘겨받을 때 `--external-id`로 보냅니다. 형식이 다르면 단계가 실패합니다.
-- `target.installScript`(선택, 16 KiB 이하, 첫 줄 `#!/bin/bash` 또는 `#!/bin/sh`): 관리자가 정한, 각 instance에 필요한 것을 설치하는 스크립트입니다. 비밀 값을 넣지 않습니다. `aws-asg`에서는 gzip·base64로 stack parameter `InstallScript1`~`InstallScript3`에 나누어 넣습니다. 압축한 스크립트와 `AppConfig`가 instance user data(16 KB)를 넘으면 `deploy` 단계가 실패합니다.
+- `target.externalId`(선택, `^[A-Za-z0-9+=,.@:/-]{2,1224}$`): 다른 AWS 계정의 Target에 있습니다. `target.sh`가 deploy role을 넘겨받을 때 `--external-id`로 보냅니다. 형식이 다르면 단계가 실패합니다.
+- `target.installScript`(선택, 16 KiB 이하, 첫 줄 `#!/bin/bash` 또는 `#!/bin/sh`): 관리자가 정한, 각 instance에 필요한 것을 설치하는 스크립트입니다. 비밀 값을 넣지 않습니다.
 
 eks-demo 노드는 모두 Spot입니다. `app-build`의 각 단계는 Spot 회수로 Pod가 지워지거나 SIGTERM(exit code 143)으로 끝나면 같은 작업 volume으로 최대 2번 다시 실행합니다. 단계 자체의 실패(다른 exit code, 단계 deadline)는 다시 실행하지 않습니다. 회수로 끝난 `build`·`manifest`는 다음 시도를 위해 push credential을 남깁니다.
 

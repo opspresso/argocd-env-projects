@@ -48,7 +48,7 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   `kubernetes.io/arch`; `amd64` also tolerates the amd64 NodePool taint `opspresso.com/arch=amd64:NoSchedule`. Another value
   fails the deploy step. Without the value the Pods have no scheduling constraint.
 - The app chart renders only the kinds that AppProject `projects` allows. Adding a kind needs a change there too.
-- `charts/delivery/files/{app-build,app-deploy,app-remove,app-deploy-eb,app-remove-eb,app-deploy-asg,app-remove-asg,image-bake,resource-sync,env-cleanup}.yaml` are static. Argo's `{{...}}` parameters must not
+- `charts/delivery/files/{app-build,app-deploy,app-remove,app-deploy-eb,app-remove-eb,resource-sync,env-cleanup}.yaml` are static. Argo's `{{...}}` parameters must not
   pass through Helm; cluster values reach the steps through ConfigMap `delivery-settings`, and the shared scripts
   (`render.jq`, `check-resources.sh`, `commit.sh`) through ConfigMap `delivery-scripts`.
 - Keep the WorkflowTemplate names, parameters, results and DAG task names of the Workflow contract in
@@ -67,17 +67,11 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   (`target.sh` checks it). The stack (`eb-stack.yaml`) and the source bundle (`eb-bundle.py`) take every value from
   Agent Runway and the Target. Secret values never enter the bundle, the stack or the Workflow: the instance reads them
   from its environment's SSM path when the app starts.
-- `app-deploy-asg` and `app-remove-asg` do the same for an `aws-asg` Target with `asg-stack.yaml`: a new Deployment
-  replaces the Auto Scaling group, and CloudFormation keeps the old one unless the new instances signal a healthy app.
-  The instances run the Release image with `images/runway-app.py` of the Target's golden image, which passes
-  Variables to Docker by name through the environment only.
 - The VM Target steps read the instance type and counts only from `application.environment` (`instanceType`,
   `replicas`, `maxReplicas`); Agent Runway resolves the Project's size into them (agent-platform `docs/DELIVERY_V4.md`
   D3). The optional `target.externalId` (D4) goes to every `aws sts assume-role` of `target.sh`. The optional
-  `target.installScript` (D5) runs on each instance before the app: the prebuild hook `00-install.sh` of the EB
-  bundle, or the user data of the aws-asg launch template. A non-zero exit fails the Deployment.
-- `image-bake` builds a golden image (`images/vm-node.pkr.hcl`) with packer in the Target account. Only the Target's
-  bake role `agent-runway-target-bake` runs it; no Release is baked into an image.
+  `target.installScript` (D5) runs on each instance before the app, as the prebuild hook `00-install.sh` of the EB
+  bundle. A non-zero exit fails the Deployment.
 
 ## Validation
 

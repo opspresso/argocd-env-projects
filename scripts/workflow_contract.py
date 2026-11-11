@@ -7,8 +7,7 @@ import re
 import yaml
 
 ENTRYPOINTS = {"app-build": "release", "app-deploy": "deployment", "app-remove": "removal",
-               "app-deploy-eb": "deployment", "app-remove-eb": "removal", "app-deploy-asg": "deployment",
-               "app-remove-asg": "removal", "image-bake": "bake", "resource-sync": "sync", "env-cleanup": "sweep"}
+               "app-deploy-eb": "deployment", "app-remove-eb": "removal", "resource-sync": "sync", "env-cleanup": "sweep"}
 
 
 def unassigned_variables(script):
@@ -38,8 +37,7 @@ for name, entry in ENTRYPOINTS.items():
     # Agent Runway reads results and logs: Workflows stay 1 day. The build and deploy steps keep every Pod as long,
     # so deployment_logs can return a successful step's output too; resource-sync output is not read.
     assert spec["ttlStrategy"] == {"secondsAfterSuccess": 86400, "secondsAfterFailure": 86400}, name
-    if name in ("app-build", "app-deploy", "app-remove", "app-deploy-eb", "app-remove-eb", "app-deploy-asg",
-                "app-remove-asg", "image-bake"):
+    if name in ("app-build", "app-deploy", "app-remove", "app-deploy-eb", "app-remove-eb"):
         # Explicit, because the controller's workflowDefaults (OnPodSuccess) apply when podGC is absent.
         assert spec["podGC"] == {"strategy": "OnWorkflowCompletion", "deleteDelayDuration": "24h"}, name
     else:
@@ -47,11 +45,10 @@ for name, entry in ENTRYPOINTS.items():
     steps = {t["name"]: t for t in spec["templates"]}
     for step in spec["templates"]:
         if step.get("serviceAccountName") == "delivery-target":
-            # Target steps run for minutes on nodes that can go away: Karpenter must not consolidate them, and the
-            # repeatable ones (all but the packer build, which would leave its instance behind) retry a lost Pod.
+            # Target steps run for minutes on nodes that can go away: Karpenter must not consolidate them, and they
+            # retry a lost Pod.
             assert step.get("metadata", {}).get("annotations", {}).get("karpenter.sh/do-not-disrupt") == "true", f"{name}:{step['name']}"
-            if name != "image-bake":
-                assert 'lastRetry.status == "Error"' in step.get("retryStrategy", {}).get("expression", ""), f"{name}:{step['name']}"
+            assert 'lastRetry.status == "Error"' in step.get("retryStrategy", {}).get("expression", ""), f"{name}:{step['name']}"
     for step in spec["templates"]:
         for container in [step.get("container")] + step.get("initContainers", []):
             if container and container.get("args"):
