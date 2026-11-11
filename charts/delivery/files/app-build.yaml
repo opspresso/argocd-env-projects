@@ -24,7 +24,8 @@ spec:
     parameters:
       - name: release
       - name: project
-      # The source archive of this Release (s3://<bucket>/<cluster>/_sources/<Release ID>.tar.gz) and its commit SHA.
+      # The source archive of the commit (s3://<bucket>/<cluster>/_sources/<Project ID>/<commit SHA>.tar.gz) and that
+      # commit SHA.
       - name: source
       - name: revision
       - name: applicationSha256
@@ -108,8 +109,8 @@ spec:
             template: result
             depends: "registry && (build.Succeeded || build.Skipped) && (manifest.Succeeded || manifest.Skipped)"
 
-    # Unpacks the source archive of this Release and records its commit. Agent Runway read the repository with the Git
-    # permission of the person who requested the deployment and uploaded the archive; this step and the cluster hold no
+    # Unpacks the source archive and records its commit. Agent Runway read the repository with the Git permission of
+    # the person who requested the deployment and uploaded the archive; this step and the cluster hold no
     # Git credential. The archive is a gzip tar with one top-level directory, as GitHub and GitLab produce it, and has
     # no .git directory.
     - name: checkout
