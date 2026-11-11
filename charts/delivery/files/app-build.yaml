@@ -115,6 +115,8 @@ spec:
     #   redirects are refused so the header never leaves the host.
     # - all empty: a public repository.
     # Nothing is stored in /work, which the test and build steps read.
+    # ssh needs a passwd entry for its user. The image has none for user 1000, so ConfigMap delivery-passwd supplies
+    # the file.
     - name: checkout
       serviceAccountName: delivery-git
       activeDeadlineSeconds: 300
@@ -180,10 +182,14 @@ spec:
         volumeMounts:
           - {name: work, mountPath: /work}
           - {name: known-hosts, mountPath: /etc/delivery, readOnly: true}
+          - {name: passwd, mountPath: /etc/passwd, subPath: passwd, readOnly: true}
       volumes:
         - name: known-hosts
           configMap:
             name: delivery-known-hosts
+        - name: passwd
+          configMap:
+            name: delivery-passwd
       outputs:
         parameters:
           - name: revision
