@@ -1,5 +1,5 @@
-# Written by the app-deploy workflow for Deployment cbd563df-213b-4b2d-a08f-3af165441149. Do not edit.
-deployment: cbd563df-213b-4b2d-a08f-3af165441149
+# Written by the app-deploy workflow for Deployment 1ea0c0f7-10f4-4033-93d1-1200d8e2aac0. Do not edit.
+deployment: 1ea0c0f7-10f4-4033-93d1-1200d8e2aac0
 app:
   controller:
     enabled: true
@@ -14,6 +14,8 @@ app:
     enabled: true
     targetPort: 3000
   routing:
+    hosts:
+      - sample-node-10-dev.apps.rovr.dev
     httpRoute:
       enabled: true
   env:
@@ -45,7 +47,7 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: cbd563df-213b-4b2d-a08f-3af165441149
+      force-sync: 1ea0c0f7-10f4-4033-93d1-1200d8e2aac0
   configmap:
     enabled: true
     data:
@@ -53,6 +55,6 @@ app:
       CACHE_VALKEY_PORT: "6379"
       CACHE_VALKEY_USERNAME: default
   podAnnotations:
-    opspresso.com/deployment: cbd563df-213b-4b2d-a08f-3af165441149
+    opspresso.com/deployment: 1ea0c0f7-10f4-4033-93d1-1200d8e2aac0
   nodeSelector:
     kubernetes.io/arch: arm64
