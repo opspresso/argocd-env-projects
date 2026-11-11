@@ -69,3 +69,10 @@ app:
       labelSelector:
         matchLabels:
           app.kubernetes.io/name: app
+  nodeSelector:
+    kubernetes.io/arch: amd64
+  tolerations:
+    - key: opspresso.com/arch
+      operator: Equal
+      value: amd64
+      effect: NoSchedule
