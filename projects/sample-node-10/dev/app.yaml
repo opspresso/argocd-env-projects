@@ -1,5 +1,5 @@
-# Written by the app-deploy workflow for Deployment d57efd72-d9cd-4246-973e-1aa6b0bbbf60. Do not edit.
-deployment: d57efd72-d9cd-4246-973e-1aa6b0bbbf60
+# Written by the app-deploy workflow for Deployment 4fb415b5-8d1e-4cf2-82db-184862c14d6c. Do not edit.
+deployment: 4fb415b5-8d1e-4cf2-82db-184862c14d6c
 app:
   controller:
     enabled: true
@@ -47,7 +47,7 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: d57efd72-d9cd-4246-973e-1aa6b0bbbf60
+      force-sync: 4fb415b5-8d1e-4cf2-82db-184862c14d6c
   configmap:
     enabled: true
     data:
@@ -55,6 +55,6 @@ app:
       CACHE_VALKEY_PORT: "6379"
       CACHE_VALKEY_USERNAME: default
   podAnnotations:
-    opspresso.com/deployment: d57efd72-d9cd-4246-973e-1aa6b0bbbf60
+    opspresso.com/deployment: 4fb415b5-8d1e-4cf2-82db-184862c14d6c
   nodeSelector:
     kubernetes.io/arch: arm64
