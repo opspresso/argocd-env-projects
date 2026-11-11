@@ -59,7 +59,7 @@ flowchart LR
 | `app-remove` | `remove` | `delivery-git` | `projects/<slug>/<env>/app.yaml`을 지운다. 리소스는 그대로 둔다 |
 | `app-remove` | `verify` | `delivery-verify` | Argo CD가 namespace의 Deployment `app`을 지울 때까지 기다린다 |
 | `app-remove` | `cleanup` | `delivery-verify`·`delivery-git` | `env-cleanup`의 `check-and-prune`. 아래 `env-cleanup`의 `live`·`prune`과 같다. 이 Workflow가 이미 잡은 mutex 안에서 실행한다 |
-| `app-deploy-eb` | `deploy` | `delivery-target` | `aws-eb` Target의 deploy role을 넘겨받는다. source bundle(`eb-bundle.py`: digest 고정 이미지의 `docker-compose.yml`과, 시작할 때 그 환경의 SSM 경로에서 비밀 값을 읽는 hook `01-runway.sh`)을 Target bucket에 올리고 stack `runway-<slug>-<env>`(`eb-stack.yaml`)를 만들거나 갱신한다. Target에 `installScript`가 있으면 bundle의 prebuild hook `00-install.sh`가 되어 `01-runway.sh`보다 먼저 실행된다. 스크립트가 0이 아닌 값으로 끝나면 배포가 실패한다. Immutable 배포이고 실패하면 CloudFormation이 되돌린다 |
+| `app-deploy-eb` | `deploy` | `delivery-target` | `aws-eb` Target의 deploy role을 넘겨받는다. source bundle(`eb-bundle.py`: digest 고정 이미지의 `docker-compose.yml`과, 시작할 때 그 환경의 SSM 경로에서 비밀 값을 읽는 hook `01-runway.sh`)을 Target bucket에 올리고 stack `runway-<slug>-<env>`(`eb-stack.yaml`)를 만들거나 갱신한다. Target에 `installScript`가 있으면 bundle의 prebuild hook `00-install.sh`가 되어 `01-runway.sh`보다 먼저 실행된다. 스크립트가 0이 아닌 값으로 끝나면 배포가 실패한다. 실패하면 CloudFormation이 되돌린다. 교체 방식은 `environment.rollout`이 정한다 |
 | `app-deploy-eb` | `verify` | `delivery-target` | Elastic Beanstalk 환경이 이 Deployment의 version을 `Ok` health로 실행하고 `https://<host><health>`가 2xx를 반환할 때까지 기다린다 |
 | `app-remove-eb` | `remove`·`verify` | `delivery-target` | stack `runway-<slug>-<env>`를 지우고 없어졌는지 확인한다. 리소스와 Variable은 남긴다 |
 | `resource-sync` | `write` | `delivery-git` | manifest가 허용한 kro 인스턴스 종류(`resourceKinds`) 또는 chart(`resourceCharts`)이고 그 환경 namespace에 속하는지, 이름이 `^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$`이고 고유한지 확인하고 `projects/<slug>/<env>/resources.yaml`과 `resources/<name>.yaml`을 통째로 바꾼다. 리소스를 모두 지우려면 `{apiVersion: v1, kind: List, items: []}` 문서를 보낸다. 빈 manifest는 거부한다 |
@@ -71,6 +71,7 @@ flowchart LR
 VM Target Workflow(`app-deploy-eb`·`app-remove-eb`)는 Agent Runway가 보낸 값만 씁니다.
 
 - instance type과 instance 수: parameter `application`의 `environment.instanceType`, `environment.replicas`(최소), `environment.maxReplicas`(최대). Agent Runway가 Project의 크기 등급을 이 값으로 바꿉니다. `environment.instanceType`이 없거나 instance type 형식이 아니면 `deploy` 단계가 실패합니다.
+- 교체 방식: parameter `application`의 `environment.rollout`(선택). 값이 없거나 `immutable`이면 새 instance가 health check를 통과한 뒤에 기존 instance를 바꿉니다(Elastic Beanstalk `Immutable`). 실패한 배포는 실행 중인 Release를 건드리지 않습니다. `all-at-once`이면 모든 instance가 새 Release를 한꺼번에 받습니다(`AllAtOnce`). 더 빠르지만 교체하는 동안, 그리고 실패한 뒤 되돌리는 동안 앱이 응답하지 않습니다. Agent Runway는 sandbox 환경에만 `all-at-once`를 보냅니다. 다른 값이면 `deploy` 단계가 실패합니다.
 - `target.externalId`(선택, `^[A-Za-z0-9+=,.@:/-]{2,1224}$`): 다른 AWS 계정의 Target에 있습니다. `target.sh`가 deploy role을 넘겨받을 때 `--external-id`로 보냅니다. 형식이 다르면 단계가 실패합니다.
 - `target.installScript`(선택, 16 KiB 이하, 첫 줄 `#!/bin/bash` 또는 `#!/bin/sh`): 관리자가 정한, 각 instance에 필요한 것을 설치하는 스크립트입니다. 비밀 값을 넣지 않습니다.
 

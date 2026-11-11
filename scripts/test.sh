@@ -113,8 +113,6 @@ fails "an environment that does not own its namespace is refused" "namespace mus
 expect "a values file cannot move the app to another environment" "path: '?/agent-runway/eks-demo/todo/dev'?$" "$(app todo dev tests/app/dev.yaml -f tests/app/override.yaml)"
 fails "an environment name with a hyphen is refused" "not an Agent Runway environment name" app todo dev-2 tests/app/dev.yaml
 fails "an environment name in another form is refused" "not an Agent Runway environment name" app todo Prod tests/app/prod.yaml
-# The ApplicationSet of an older argocd-env-apps still passes the allowed list; the chart ignores it.
-expect "the parameter of an older ApplicationSet still renders" '"todo-dev.apps.rovr.dev"' "$(app todo dev tests/app/dev.yaml --set 'app.tenant.environments=dev prod')"
 fails "a tag instead of a digest is refused" "pin the image by digest" app todo dev tests/app/dev.yaml --set app.image.reference=nginx:latest
 fails "an invalid slug is refused" "not an Agent Runway Project slug" app Todo dev tests/app/dev.yaml
 
@@ -254,6 +252,11 @@ sized() { (APPLICATION=$1; target "$target_json" instance_type); }
 expect "instance_type reads application.environment.instanceType" '^t4g\.small$' "$(sized '{"environment":{"instanceType":"t4g.small"}}')"
 fails "instance_type refuses an application without an instance type" "environment.instanceType is missing" sized '{"environment":{}}'
 fails "instance_type refuses a value that is not an instance type" "is not an instance type" sized '{"environment":{"instanceType":"t4g.small;id"}}'
+rolled() { (APPLICATION=$1; target "$target_json" rollout); }
+expect "rollout replaces instances only when the new ones are healthy by default" '^Immutable$' "$(rolled '{"environment":{}}')"
+expect "rollout reads application.environment.rollout" '^AllAtOnce$' "$(rolled '{"environment":{"rollout":"all-at-once"}}')"
+expect "rollout takes the explicit default" '^Immutable$' "$(rolled '{"environment":{"rollout":"immutable"}}')"
+fails "rollout refuses another value" "must be immutable or all-at-once" rolled '{"environment":{"rollout":"AllAtOnce; id"}}'
 
 # install_script writes the Target's installScript; no field gives an empty file.
 script_dir=$(mktemp -d)

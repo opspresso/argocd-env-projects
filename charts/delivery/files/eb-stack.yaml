@@ -53,6 +53,11 @@ Parameters:
   HealthPath:
     Type: String
     AllowedPattern: "^/.*$"
+  Rollout:
+    Type: String
+    Description: How a new Release replaces the running one. AllAtOnce is faster and takes the app down meanwhile.
+    AllowedValues: [Immutable, AllAtOnce]
+    Default: Immutable
   SecretsPath:
     Type: String
     Description: The SSM path of this Project environment's Variables (/agent-runway/<target>/<project>/<environment>).
@@ -63,6 +68,9 @@ Parameters:
   RepositoryArn:
     Type: String
     Description: The ECR repository projects/<project> the instances pull the Release image from.
+
+Conditions:
+  AllAtOnce: !Equals [!Ref Rollout, AllAtOnce]
 
 Resources:
   # The instances read only this environment's Variables and pull only this Project's images.
@@ -159,9 +167,14 @@ Resources:
         - { Namespace: aws:elasticbeanstalk:environment:process:default, OptionName: HealthCheckPath, Value: !Ref HealthPath }
         - { Namespace: aws:elasticbeanstalk:environment:process:default, OptionName: MatcherHTTPCode, Value: "200-299" }
         - { Namespace: aws:elasticbeanstalk:healthreporting:system, OptionName: SystemType, Value: enhanced }
-        # A new version starts on new instances and replaces the old ones only when they pass the health check.
-        - { Namespace: aws:elasticbeanstalk:command, OptionName: DeploymentPolicy, Value: Immutable }
-        - { Namespace: aws:autoscaling:updatepolicy:rollingupdate, OptionName: RollingUpdateType, Value: Immutable }
+        # Immutable: a new version starts on new instances and replaces the old ones only when they pass the health
+        # check. AllAtOnce: every instance takes the new version at once, and a changed instance setting replaces
+        # them all at once.
+        - { Namespace: aws:elasticbeanstalk:command, OptionName: DeploymentPolicy, Value: !Ref Rollout }
+        - !If
+          - AllAtOnce
+          - { Namespace: aws:autoscaling:updatepolicy:rollingupdate, OptionName: RollingUpdateEnabled, Value: "false" }
+          - { Namespace: aws:autoscaling:updatepolicy:rollingupdate, OptionName: RollingUpdateType, Value: Immutable }
         - { Namespace: aws:elasticbeanstalk:cloudwatch:logs, OptionName: StreamLogs, Value: "true" }
         - { Namespace: aws:elasticbeanstalk:cloudwatch:logs, OptionName: RetentionInDays, Value: "14" }
         - { Namespace: aws:elasticbeanstalk:cloudwatch:logs, OptionName: DeleteOnTerminate, Value: "true" }
