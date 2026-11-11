@@ -63,8 +63,11 @@ spec:
               printf '%s' "$ENVIRONMENT" | grep -qE '^[a-z][a-z0-9]{1,11}$' || { echo "Invalid environment $ENVIRONMENT"; exit 1; }
               case "$IMAGE" in "${REGISTRY}/${PROJECT}@sha256:"*) ;; *) echo "Image $IMAGE is not an image of ${REGISTRY}/${PROJECT} pinned by digest"; exit 1;; esac
               printf '%s' "${IMAGE#*@sha256:}" | grep -qE '^[a-f0-9]{64}$' || { echo "Invalid digest in $IMAGE"; exit 1; }
+              # The host is the Project's own: <project>.<domain> or <project>-<environment>.<domain>. The guard of
+              # charts/app checks the domain.
+              printf '%s' "$HOST" | grep -qE "^${PROJECT}(-${ENVIRONMENT})?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" || { echo "Host $HOST is not a host of ${PROJECT} in ${ENVIRONMENT}"; exit 1; }
               { echo "# Written by the app-deploy workflow for Deployment ${DEPLOYMENT}. Do not edit."
-                jq -n --argjson application "$APPLICATION" --arg deployment "$DEPLOYMENT" --arg image "$IMAGE" \
+                jq -n --argjson application "$APPLICATION" --arg deployment "$DEPLOYMENT" --arg image "$IMAGE" --arg host "$HOST" \
                   -f /etc/delivery-scripts/render.jq | yq -p json -o yaml; } > /work/app.yaml
           env:
             - {name: PROJECT, value: "{{workflow.parameters.project}}"}
@@ -72,6 +75,7 @@ spec:
             - {name: DEPLOYMENT, value: "{{workflow.parameters.deployment}}"}
             - {name: IMAGE, value: "{{workflow.parameters.image}}"}
             - {name: APPLICATION, value: "{{workflow.parameters.application}}"}
+            - {name: HOST, value: "{{workflow.parameters.host}}"}
             - {name: HOME, value: /tmp}
           envFrom:
             - configMapRef:

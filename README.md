@@ -84,13 +84,16 @@ eks-demo 노드는 모두 Spot입니다. `app-build`의 각 단계는 Spot 회�
 
 ## 앱 주소
 
-환경 목록과 primary 환경은 argocd-env-addons의 `app_delivery.environments`·`app_delivery.primary_environment`가 정합니다.
-Agent Runway의 `RUNWAY_ENVIRONMENTS`와 같아야 합니다. 기본값은 `[dev, prod]`, primary는 `prod`입니다.
+앱 주소는 Agent Runway가 Project 환경마다 정하고, `deploy` 단계가 `app.yaml`의 `app.routing.hosts`에 씁니다.
+`charts/app`의 guard는 그 Project 환경의 두 주소만 허용합니다.
 
-| Environment | 주소 |
+| 단계 | 주소 |
 | --- | --- |
-| primary(기본 `prod`) | `https://<slug>.apps.rovr.dev` |
-| 그 밖의 환경(예: `dev`) | `https://<slug>-<env>.apps.rovr.dev` |
+| Project 파이프라인의 마지막 단계 | `https://<slug>.apps.rovr.dev` |
+| 그 밖의 단계(예: `dev`) | `https://<slug>-<env>.apps.rovr.dev` |
+
+Project가 모든 단계에 환경 이름을 붙이도록 고르면 마지막 단계도 `https://<slug>-<env>.apps.rovr.dev`입니다.
+허용하는 환경 목록은 argocd-env-apps의 `app_delivery.environments`가 정하며 Agent Runway의 환경 이름과 같아야 합니다. 기본값은 `[dev, prod]`입니다.
 
 인증서와 DNS는 terraform-env-demo `demo/3-alb`가, push 역할은 terraform-env-opsp `demo/8-app-delivery`가 만듭니다.
 
@@ -112,14 +115,14 @@ chart를 바꾸면 다음을 실행합니다. Helm 4와 Python `pyyaml`이 필�
 
 ## 환경 추가
 
-환경 목록은 argocd-env-addons `app_delivery.environments`와 argocd-env-apps의 Agent Runway `RUNWAY_ENVIRONMENTS`가 정합니다.
+Argo CD가 Application을 만드는 환경 목록은 argocd-env-apps `app_delivery.environments`가 정하고, Agent Runway의 환경은 콘솔에서 관리합니다.
 
-1. 사전 점검: 기존 Project slug가 `-<새 환경>`으로 끝나지 않는지 확인합니다. 끝나면 그 Project의 primary host가 다른 Project의 새 환경 host와 겹칩니다.
+1. 사전 점검: 기존 Project slug가 `-<새 환경>`으로 끝나지 않는지 확인합니다. 끝나면 그 Project의 `<slug>.<domain>` 주소가 다른 Project의 새 환경 주소와 겹칩니다.
    ```bash
    ls projects | grep -- '-<새 환경>$'   # 출력이 없어야 합니다
    ```
    출력이 있으면 환경 이름을 바꾸거나 해당 Project를 먼저 정리합니다. Agent Runway도 부팅 때 같은 충돌을 거절합니다.
-2. 두 저장소에 같은 이름·순서·primary로 환경을 추가합니다. argocd-env-addons는 `argocd` Application을 수동 sync합니다.
+2. argocd-env-apps `app_delivery.environments`와 Agent Runway 콘솔에 같은 이름의 환경을 추가합니다.
 3. 환경을 목록에서 지우면 그 환경의 Application이 지워지고, resources finalizer로 앱과 kro 인스턴스가 함께 삭제됩니다(RDS는 final snapshot만 남고, 객체가 남은 `S3Bucket`은 비울 때까지 삭제되지 않음).
 - 성공·실패한 Workflow는 1일 동안 남습니다. `app-build`·`app-deploy`는 성공·실패와 관계없이 단계 Pod와 로그도 같은 기간 남아
   Agent Runway의 `deployment_logs`로 읽을 수 있습니다. `resource-sync`는 실패한 Workflow의 Pod만 남깁니다.

@@ -13,6 +13,8 @@ app:
     enabled: true
     targetPort: 8080
   routing:
+    hosts:
+      - todo-dev.apps.rovr.dev
     httpRoute:
       enabled: true
   env:

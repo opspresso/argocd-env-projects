@@ -22,6 +22,8 @@ app:
     enabled: true
     targetPort: 3000
   routing:
+    hosts:
+      - todo.apps.rovr.dev
     httpRoute:
       enabled: true
   env:
