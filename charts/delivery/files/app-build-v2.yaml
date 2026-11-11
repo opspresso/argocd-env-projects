@@ -1,0 +1,482 @@
+# One Release: test and build one revision of a Project into an image pinned by digest (agent-platform
+# docs/APP_DELIVERY.md). Agent Runway is the only submitter and names the Workflow build-<Release ID>. Every
+# parameter comes from Agent Runway; the source archive only provides the code. Cluster settings come from
+# ConfigMap delivery-settings. Results: revision (commit SHA) and image (<registry>/<project>@sha256:...).
+# It replaces app-build, which clones the repository with a per-Project credential: this one reads the source
+# archive Agent Runway uploaded, so the cluster holds no Git credential. Both stay until Agent Runway submits
+# only this one.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: app-build-v2
+spec:
+  entrypoint: release
+  serviceAccountName: delivery-runner
+  activeDeadlineSeconds: 3600
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 86400
+  # Every step's Pod stays a day after the Workflow ends so Agent Runway can return its logs. Set it here: without
+  # podGC the controller's workflowDefaults (OnPodSuccess) remove each Pod as soon as it succeeds.
+  podGC:
+    strategy: OnWorkflowCompletion
+    deleteDelayDuration: 24h
+  securityContext:
+    fsGroup: 1000
+  arguments:
+    parameters:
+      - name: release
+      - name: project
+      # The source archive of the commit (s3://<bucket>/<cluster>/_sources/<Project ID>/<commit SHA>.tar.gz) and that
+      # commit SHA.
+      - name: source
+      - name: revision
+      - name: applicationSha256
+      # The runtime section of the applied declaration, with defaults filled in (JSON).
+      - name: runtime
+      # The image platforms (JSON list of linux/amd64 and linux/arm64). One platform builds one image; more build one
+      # image per platform on a node of that architecture and join them in one manifest list. No emulation (QEMU).
+      - name: platforms
+        value: '["linux/arm64"]'
+  # The work volume is scratch space. gp3-ephemeral deletes the EBS volume with its claim; the default gp3 class
+  # retains it and leaks one volume per Release.
+  volumeClaimTemplates:
+    - metadata:
+        name: work
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: gp3-ephemeral
+        resources:
+          requests:
+            storage: 10Gi
+  # Every eks-demo node is Spot. A step whose Pod a Spot reclaim stops (the Pod is deleted, or its container ends on
+  # SIGTERM with exit code 143) runs again (retryStrategy &reclaimed) on another node in the work volume's AZ; every step
+  # is safe to repeat. A step's own failure (any other exit code, or its deadline) is not retried. Agent Runway counts
+  # only the latest attempt of a step.
+  templates:
+    - name: release
+      # One Pod at a time: every step mounts the same ReadWriteOnce work volume.
+      parallelism: 1
+      dag:
+        tasks:
+          - name: checkout
+            template: checkout
+          - name: check-application
+            template: check-application
+            depends: checkout
+          - name: test
+            template: test
+            depends: check-application
+            when: "'{{tasks.check-application.outputs.parameters.test-image}}' != ''"
+            arguments:
+              parameters:
+                - name: image
+                  value: "{{tasks.check-application.outputs.parameters.test-image}}"
+          - name: registry
+            template: registry
+            depends: "check-application && (test.Succeeded || test.Skipped)"
+            arguments:
+              parameters:
+                - name: revision
+                  value: "{{tasks.checkout.outputs.parameters.revision}}"
+          - name: build
+            template: build
+            depends: registry
+            when: "'{{tasks.registry.outputs.parameters.digest}}' == ''"
+            withParam: "{{tasks.registry.outputs.parameters.builds}}"
+            arguments:
+              parameters:
+                - name: platform
+                  value: "{{item.platform}}"
+                - name: arch
+                  value: "{{item.arch}}"
+                - name: tag
+                  value: "{{item.tag}}"
+                - name: final
+                  value: "{{item.final}}"
+          # More than one platform: joins the per-platform images in one manifest list under the Release tag.
+          - name: manifest
+            template: manifest
+            depends: "registry && (build.Succeeded || build.Skipped)"
+            when: "'{{tasks.registry.outputs.parameters.digest}}' == '' && '{{tasks.registry.outputs.parameters.archs}}' =~ ' '"
+            arguments:
+              parameters:
+                - name: archs
+                  value: "{{tasks.registry.outputs.parameters.archs}}"
+                - name: tag
+                  value: "{{tasks.registry.outputs.parameters.tag}}"
+          # The only step that returns the Release image. Argo keeps one value per global output, and which of several
+          # writers wins is not defined, so registry (a reused image), build (one platform) and manifest (more) write
+          # /work/image and this step reads it after them.
+          - name: result
+            template: result
+            depends: "registry && (build.Succeeded || build.Skipped) && (manifest.Succeeded || manifest.Skipped)"
+
+    # Unpacks the source archive and records its commit. Agent Runway read the repository with one user's Git
+    # permission (the person who requested the deployment, or for a push the person who turned push deployment on)
+    # and uploaded the archive; this step and the cluster hold no Git credential. The archive is a gzip tar with one
+    # top-level directory, as GitHub and GitLab produce it, and has no .git directory.
+    - name: checkout
+      serviceAccountName: delivery-source
+      activeDeadlineSeconds: 300
+      retryStrategy: &reclaimed
+        limit: 2
+        retryPolicy: Always
+        expression: lastRetry.status == "Error" || lastRetry.exitCode == "143"
+        backoff: {duration: 10s}
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            # Group-writable files let a test image that runs as another user write into the checkout.
+            umask 0002
+            case "${REVISION}" in ""|*[!0-9a-f]*) echo "invalid revision"; exit 1 ;; esac
+            case "${SOURCE}" in s3://*/_sources/*.tar.gz) ;; *) echo "invalid source"; exit 1 ;; esac
+            # A step that runs again after a reclaimed node starts from an empty directory.
+            rm -rf /work/src /work/source.tar.gz
+            mkdir /work/src
+            aws s3 cp --only-show-errors "${SOURCE}" /work/source.tar.gz
+            tar -xzf /work/source.tar.gz -C /work/src --strip-components=1
+            rm /work/source.tar.gz
+            printf '%s\n' "${REVISION}" > /work/revision
+            echo "Unpacked the source at ${REVISION}"
+        env:
+          - {name: SOURCE, value: "{{workflow.parameters.source}}"}
+          - {name: REVISION, value: "{{workflow.parameters.revision}}"}
+          - {name: HOME, value: /tmp}
+          - name: AWS_REGION
+            valueFrom: {configMapKeyRef: {name: delivery-settings, key: AWS_REGION}}
+        securityContext: &unprivileged
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources: &small
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {memory: 512Mi}
+        volumeMounts:
+          - {name: work, mountPath: /work}
+      outputs:
+        parameters:
+          - name: revision
+            globalName: revision
+            valueFrom:
+              path: /work/revision
+
+    # The file at this revision must be the one Agent Runway validated, or the deployed settings would differ from it.
+    - name: check-application
+      activeDeadlineSeconds: 120
+      retryStrategy: *reclaimed
+      # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
+      automountServiceAccountToken: false
+      executor:
+        serviceAccountName: delivery-runner
+      metadata:
+        labels:
+          opspresso.com/delivery-role: runner
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            cd /work/src
+            if [ ! -f application.yaml ]; then echo "application.yaml is missing at this revision"; exit 1; fi
+            actual=$(sha256sum application.yaml | cut -d' ' -f1)
+            if [ "$actual" != "$APPLICATION_SHA256" ]; then
+              echo "application.yaml at this revision ($actual) differs from the one applied to Agent Runway ($APPLICATION_SHA256). Apply it with project_apply and build again."
+              # Agent Runway reports application_changed for this exit code only (agent-runway APPLICATION_CHANGED_EXIT_CODE).
+              exit 3
+            fi
+            printf '%s' "$RUNTIME" > /work/runtime.json
+            jq -r '.test.image // ""' /work/runtime.json > /work/test-image
+            jq -r '.test.command // ""' /work/runtime.json > /work/test.sh
+            jq -r '.build.context // "."' /work/runtime.json > /work/context
+            jq -r '.build.dockerfile // "Dockerfile"' /work/runtime.json > /work/dockerfile
+            for path in "$(cat /work/context)" "$(cat /work/context)/$(cat /work/dockerfile)"; do
+              case "/$path/" in */../*) echo "build path $path leaves the repository"; exit 1;; esac
+            done
+            echo "application.yaml matches the applied declaration"
+        env:
+          - {name: APPLICATION_SHA256, value: "{{workflow.parameters.applicationSha256}}"}
+          - {name: RUNTIME, value: "{{workflow.parameters.runtime}}"}
+        securityContext: *unprivileged
+        resources: *small
+        volumeMounts:
+          - {name: work, mountPath: /work}
+      outputs:
+        parameters:
+          - name: test-image
+            valueFrom:
+              path: /work/test-image
+
+    # Runs the app's own test command. The Pod has no credential and reaches only DNS and the public internet.
+    - name: test
+      activeDeadlineSeconds: 1800
+      retryStrategy: *reclaimed
+      inputs:
+        parameters:
+          - name: image
+      # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
+      automountServiceAccountToken: false
+      executor:
+        serviceAccountName: delivery-runner
+      metadata:
+        labels:
+          opspresso.com/delivery-role: runner
+      container:
+        image: "{{inputs.parameters.image}}"
+        command: [/bin/sh, /work/test.sh]
+        workingDir: /work/src
+        env:
+          - {name: HOME, value: /tmp}
+          - {name: CI, value: "true"}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources:
+          requests: {cpu: 500m, memory: 1Gi}
+          limits: {memory: 4Gi}
+        volumeMounts:
+          - {name: work, mountPath: /work}
+
+    # Creates the Project repository and a push credential that only reaches it. An image already built for the
+    # same commit is reused: tags are immutable, so a second build of the commit could not be pushed anyway.
+    - name: registry
+      serviceAccountName: delivery-registry
+      activeDeadlineSeconds: 300
+      retryStrategy: *reclaimed
+      inputs:
+        parameters:
+          - name: revision
+      container:
+        image: alpine/k8s:1.37.1
+        command: [sh, -euc]
+        args:
+          - |
+            repository="projects/${PROJECT}"
+            if ! aws ecr describe-repositories --repository-names "$repository" >/dev/null 2>&1; then
+              aws ecr create-repository --repository-name "$repository" --image-tag-mutability IMMUTABLE \
+                --image-scanning-configuration scanOnPush=true >/dev/null
+              echo "Created repository $repository"
+            fi
+            aws ecr put-lifecycle-policy --repository-name "$repository" --lifecycle-policy-text \
+              '{"rules":[{"rulePriority":1,"description":"Keep the newest 50 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":50},"action":{"type":"expire"}}]}' >/dev/null
+            existing() {
+              aws ecr describe-images --repository-name "$repository" --image-ids "imageTag=$1" \
+                --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true
+            }
+            # The Release tag names the commit and the architectures, so a build for other platforms never meets an
+            # immutable tag of the same commit. arm64 alone keeps the bare commit tag of the images built before.
+            archs=$(printf '%s' "$PLATFORMS" | jq -r '
+              if type == "array" and length > 0 and all(.[]; . == "linux/amd64" or . == "linux/arm64")
+              then map(ltrimstr("linux/")) | unique | join(" ") else error("platforms must list linux/amd64 or linux/arm64") end')
+            key=$(printf '%s' "$archs" | tr ' ' '-')
+            if [ "$key" = arm64 ]; then tag="$REVISION"; else tag="${REVISION}-${key}"; fi
+            printf '%s' "$archs" > /work/archs
+            printf '%s' "$tag" > /work/tag
+            digest=$(existing "$tag")
+            case "$digest" in sha256:*)
+              echo "Reusing the image of ${tag}: $digest"
+              printf '%s' "$digest" > /work/digest
+              printf '%s/%s@%s' "$REGISTRY" "$PROJECT" "$digest" > /work/image
+              echo '[]' > /work/builds
+              exit 0;;
+            esac
+            : > /work/digest
+            : > /work/image
+            # One platform pushes the Release tag itself. More push one image per platform (<commit>-build-<arch>) and
+            # the manifest step tags their list; a platform image left by an earlier attempt is reused.
+            builds='[]'
+            for arch in $archs; do
+              if [ "$arch" = "$archs" ]; then
+                builds=$(printf '%s' "$builds" | jq -c --arg arch "$arch" --arg tag "$tag" '. + [{platform: "linux/\($arch)", arch: $arch, tag: $tag, final: "true"}]')
+                continue
+              fi
+              part="${REVISION}-build-${arch}"
+              digest=$(existing "$part")
+              case "$digest" in sha256:*)
+                echo "Reusing the ${arch} image of ${REVISION}: $digest"
+                printf '%s' "$digest" > "/work/digest-${arch}"
+                continue;;
+              esac
+              builds=$(printf '%s' "$builds" | jq -c --arg arch "$arch" --arg tag "$part" '. + [{platform: "linux/\($arch)", arch: $arch, tag: $tag, final: "false"}]')
+            done
+            printf '%s' "$builds" > /work/builds
+            session=$(aws sts assume-role --role-arn "$PUSH_ROLE_ARN" --role-session-name "release-${RELEASE}" \
+              --tags "Key=delivery-project,Value=${PROJECT}" --duration-seconds 3600 --output json)
+            export AWS_ACCESS_KEY_ID=$(printf '%s' "$session" | jq -r .Credentials.AccessKeyId)
+            export AWS_SECRET_ACCESS_KEY=$(printf '%s' "$session" | jq -r .Credentials.SecretAccessKey)
+            export AWS_SESSION_TOKEN=$(printf '%s' "$session" | jq -r .Credentials.SessionToken)
+            password=$(aws ecr get-login-password)
+            mkdir -p /work/.docker
+            umask 077
+            printf '{"auths":{"%s":{"auth":"%s"}}}' "${REGISTRY%%/*}" "$(printf 'AWS:%s' "$password" | base64 -w0)" > /work/.docker/config.json
+            echo "Prepared a push credential for $repository"
+        env:
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: RELEASE, value: "{{workflow.parameters.release}}"}
+          - {name: REVISION, value: "{{inputs.parameters.revision}}"}
+          - {name: PLATFORMS, value: "{{workflow.parameters.platforms}}"}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: *unprivileged
+        resources: *small
+        volumeMounts:
+          - {name: work, mountPath: /work}
+      outputs:
+        parameters:
+          - name: digest
+            valueFrom:
+              path: /work/digest
+          - name: archs
+            valueFrom:
+              path: /work/archs
+          - name: tag
+            valueFrom:
+              path: /work/tag
+          - name: builds
+            valueFrom:
+              path: /work/builds
+
+    # Builds the Dockerfile with kaniko for one platform on a node of that architecture and pushes it. kaniko needs no
+    # user namespace or privilege (eks-demo runs Bottlerocket on EKS Auto Mode, where user namespaces are off). It runs
+    # the Dockerfile as root inside this Pod, which holds only the push credential of this Project's repository.
+    # amd64 nodes come from NodePool delivery-amd64 (terraform-env-demo demo/6-eks-node), whose taint only these
+    # Pods tolerate.
+    - name: build
+      activeDeadlineSeconds: 2400
+      retryStrategy: *reclaimed
+      inputs:
+        parameters:
+          - name: platform
+          - name: arch
+          - name: tag
+          # "true" when this image is the Release image; "false" for one platform of a manifest list.
+          - name: final
+      # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
+      automountServiceAccountToken: false
+      executor:
+        serviceAccountName: delivery-runner
+      metadata:
+        labels:
+          opspresso.com/delivery-role: runner
+      nodeSelector:
+        kubernetes.io/arch: "{{inputs.parameters.arch}}"
+      tolerations:
+        - {key: opspresso.com/delivery-build, operator: Equal, value: "true", effect: NoSchedule}
+      container:
+        image: ghcr.io/osscontainertools/kaniko:v1.29.0-debug
+        command: [/busybox/sh, -euc]
+        args:
+          - |
+            context="/work/src/$(cat /work/context)"
+            dockerfile="$context/$(cat /work/dockerfile)"
+            image="${REGISTRY}/${PROJECT}:${TAG}"
+            # The manifest step still needs the push credential after a platform image. A step ended by a signal (a Spot
+            # reclaim, exit code 143) keeps it for its retry.
+            if [ "$FINAL" = true ]; then trap '[ $? -ge 128 ] || rm -f /work/.docker/config.json' EXIT; fi
+            /kaniko/executor --context "dir://$context" --dockerfile "$dockerfile" --custom-platform "${PLATFORM}" \
+              --destination "$image" --digest-file "/work/digest-${ARCH}" --snapshot-mode redo
+            digest=$(cat "/work/digest-${ARCH}")
+            if [ "$FINAL" = true ]; then
+              printf '%s' "$digest" > /work/digest
+              printf '%s/%s@%s' "$REGISTRY" "$PROJECT" "$digest" > /work/image
+            fi
+            echo "Pushed ${image}@${digest} (${PLATFORM})"
+        env:
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: PLATFORM, value: "{{inputs.parameters.platform}}"}
+          - {name: ARCH, value: "{{inputs.parameters.arch}}"}
+          - {name: TAG, value: "{{inputs.parameters.tag}}"}
+          - {name: FINAL, value: "{{inputs.parameters.final}}"}
+          - {name: DOCKER_CONFIG, value: /work/.docker}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+        resources:
+          requests: {cpu: "1", memory: 2Gi}
+          limits: {memory: 6Gi}
+        volumeMounts:
+          - {name: work, mountPath: /work}
+
+    # Joins the platform images in one manifest list under the Release tag; the Release image is the list's digest.
+    - name: manifest
+      activeDeadlineSeconds: 300
+      retryStrategy: *reclaimed
+      inputs:
+        parameters:
+          - name: archs
+          - name: tag
+      # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
+      automountServiceAccountToken: false
+      executor:
+        serviceAccountName: delivery-runner
+      metadata:
+        labels:
+          opspresso.com/delivery-role: runner
+      container:
+        image: gcr.io/go-containerregistry/crane/debug:v0.22.1
+        command: [/busybox/sh, -euc]
+        args:
+          - |
+            # A step ended by a signal (a Spot reclaim, exit code 143) keeps the push credential for its retry.
+            trap '[ $? -ge 128 ] || rm -f /work/.docker/config.json' EXIT
+            set --
+            for arch in $ARCHS; do set -- "$@" --manifest "${REGISTRY}/${PROJECT}@$(cat "/work/digest-${arch}")"; done
+            image="${REGISTRY}/${PROJECT}:${TAG}"
+            crane index append --docker-empty-base "$@" --tag "$image"
+            digest=$(crane digest "$image")
+            printf '%s' "$digest" > /work/digest
+            printf '%s/%s@%s' "$REGISTRY" "$PROJECT" "$digest" > /work/image
+            echo "Pushed ${image}@${digest} (${ARCHS})"
+        env:
+          - {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - {name: ARCHS, value: "{{inputs.parameters.archs}}"}
+          - {name: TAG, value: "{{inputs.parameters.tag}}"}
+          - {name: DOCKER_CONFIG, value: /work/.docker}
+          - {name: HOME, value: /tmp}
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: *unprivileged
+        resources: *small
+        volumeMounts:
+          - {name: work, mountPath: /work}
+
+    # Returns the Release image that registry, build or manifest wrote, and fails when none did.
+    - name: result
+      activeDeadlineSeconds: 120
+      retryStrategy: *reclaimed
+      # Only the Argo executor (wait container) gets the ServiceAccount token; the step's own code does not.
+      automountServiceAccountToken: false
+      executor:
+        serviceAccountName: delivery-runner
+      metadata:
+        labels:
+          opspresso.com/delivery-role: runner
+      container:
+        image: gcr.io/go-containerregistry/crane/debug:v0.22.1
+        command: [/busybox/sh, -euc]
+        args:
+          - |
+            image=$(cat /work/image)
+            case "$image" in *@sha256:*) echo "Release image $image";; *) echo "No Release image was written" >&2; exit 1;; esac
+        securityContext: *unprivileged
+        resources: *small
+        volumeMounts:
+          - {name: work, mountPath: /work}
+      outputs:
+        parameters:
+          - name: image
+            globalName: image
+            valueFrom:
+              path: /work/image

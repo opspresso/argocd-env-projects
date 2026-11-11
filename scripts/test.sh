@@ -140,7 +140,7 @@ done
 delivery=$(helm template delivery charts/delivery --namespace app-delivery \
   --set registry=123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects --set pushRoleArn=arn:aws:iam::123456789012:role/app-delivery-push \
   --set 'apiServer.cidrs={172.20.0.1/32,10.10.114.40/32}')
-for name in app-build app-deploy app-remove app-deploy-eb app-remove-eb resource-sync env-cleanup; do
+for name in app-build app-build-v2 app-deploy app-remove app-deploy-eb app-remove-eb resource-sync env-cleanup; do
   expect "delivery renders WorkflowTemplate $name" "^  name: ${name}$" "$delivery"
 done
 secret_verbs=$(yq 'select(.kind == "Role" and .metadata.name == "agent-runway") | .rules[] | select(.resources[] == "secrets") | .verbs | join(",")' <<<"$delivery")
@@ -185,6 +185,12 @@ expect "the checkout user has a passwd entry" "^[a-z]+:x:${checkout_uid}:" \
   "$(yq 'select(.kind == "ConfigMap" and .metadata.name == "delivery-passwd") | .data.passwd' <<<"$delivery")"
 expect "checkout reads that passwd file" '^delivery-passwd /etc/passwd passwd$' \
   "$(yq '.spec.templates[] | select(.name == "checkout") | (.volumes[] | select(.name == "passwd") | .configMap.name) + " " + (.container.volumeMounts[] | select(.name == "passwd") | .mountPath + " " + .subPath)' <<<"$build_yaml")"
+expect "app-build-v2 keeps the step names Agent Runway maps" '^checkout check-application test registry build manifest result$' "$(line app-build-v2 tasks)"
+expect "app-build-v2 takes the source archive and its commit" '^release project source revision applicationSha256 runtime platforms$' "$(line app-build-v2 parameters)"
+expect "app-build-v2 returns revision and image" '^image revision$' "$(line app-build-v2 outputs)"
+expect "builds from an archive are not serialized" '^$' "$(line app-build-v2 mutexes)"
+expect "the archive checkout has its ServiceAccount" '^delivery-source$' "$(yq 'select(.kind == "ServiceAccount" and .metadata.name == "delivery-source") | .metadata.name' <<<"$delivery")"
+expect "the archive checkout reports its result to Argo" 'delivery-source' "$(yq 'select(.kind == "RoleBinding" and .roleRef.name == "delivery-executor") | .subjects[].name' <<<"$delivery")"
 expect "app-build builds arm64 alone by default" "value: '\\[\"linux/arm64\"\\]'" "$build_yaml"
 expect "each platform builds on a node of its architecture" 'kubernetes.io/arch: "\{\{inputs.parameters.arch\}\}"' "$build_yaml"
 expect "steps run one at a time on the ReadWriteOnce work volume" '^      parallelism: 1$' "$build_yaml"
@@ -451,7 +457,7 @@ fails "a manifest that is not YAML is refused" "" check <<<"kind: [unclosed"
 
 if command -v argo >/dev/null; then
   # One run: resource-sync and app-remove reference env-cleanup templates.
-  if argo lint --offline charts/delivery/files/{app-build,app-deploy,app-remove,app-deploy-eb,app-remove-eb,resource-sync,env-cleanup}.yaml >/dev/null; then
+  if argo lint --offline charts/delivery/files/{app-build,app-build-v2,app-deploy,app-remove,app-deploy-eb,app-remove-eb,resource-sync,env-cleanup}.yaml >/dev/null; then
     pass "argo lint accepts the WorkflowTemplates"; else fail "argo lint accepts the WorkflowTemplates"; fi
 else
   echo "skip argo lint (argo CLI not installed)"

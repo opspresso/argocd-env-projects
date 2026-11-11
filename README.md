@@ -10,7 +10,7 @@ Agent Runway가 배포하는 앱의 GitOps 저장소입니다. Studio Agent가 A
 | 경로 | 내용 | 쓰는 주체 |
 | --- | --- | --- |
 | `charts/app/` | 앱 Environment 하나의 wrapper chart. [opspresso/helm-charts](https://github.com/opspresso/helm-charts)의 `app` chart(argocd-env-apps의 sample-node·agent-*와 같은 chart)의 설정으로 Namespace·Deployment·Service·HTTPRoute·HPA·PDB·SecretStore·ExternalSecret·NetworkPolicy·ResourceQuota를 만든다. Namespace `app-<slug>-<env>`는 이 Application의 객체이므로 Project나 Environment가 없어지면 Argo CD가 namespace와 그 안의 모든 객체를 지운다. `app.yaml`이 없으면 Deployment·Service·HTTPRoute 없이 tenant 객체만 만든다. `app.raw`에는 환경·namespace·namespace label·host·image digest를 검사하는 guard만 둔다 | 운영자(PR) |
-| `charts/delivery/` | namespace `app-delivery`의 Argo Workflows WorkflowTemplate `app-build`·`app-deploy`·`app-remove`·`resource-sync`·`env-cleanup`, CronWorkflow `env-cleanup`, 단계별 ServiceAccount·RBAC, 설정 | 운영자(PR) |
+| `charts/delivery/` | namespace `app-delivery`의 Argo Workflows WorkflowTemplate `app-build`·`app-build-v2`·`app-deploy`·`app-remove`·`resource-sync`·`env-cleanup`, CronWorkflow `env-cleanup`, 단계별 ServiceAccount·RBAC, 설정 | 운영자(PR) |
 | `projects/<slug>/<env>/app.yaml` | Environment 하나의 `app` chart 값: 이미지 digest, 복제 수, port, env, 비밀이 아닌 Variable(ConfigMap), probe, 자원, 노드 architecture(`nodeSelector` `kubernetes.io/arch`, amd64는 NodePool taint `opspresso.com/arch=amd64:NoSchedule`의 toleration도). 시크릿 Variable은 SSM에서 ExternalSecret `app-env`로 받는다. `app-deploy`의 deploy 단계가 `charts/delivery/files/render.jq`로 Agent Runway의 선언에서 만든다 | `app-deploy` workflow가 쓰고 `app-remove` workflow가 지운다 |
 | `projects/<slug>/<env>/resources.yaml` | Environment 하나의 AWS 전용 리소스(kro 인스턴스 `RdsPostgres`·`S3Bucket`·`DynamoTable`). Agent Runway가 렌더링한 manifest를 `resource-sync`의 write 단계가 검사해 기록한다 | `resource-sync` workflow만 |
 | `projects/<slug>/<env>/resources/<name>.yaml` | Kubernetes 전용 리소스 하나의 chart 이름·버전과 값(`postgres`·`valkey`, opspresso/helm-charts). ApplicationSet `project-resources`가 파일마다 Application `app-<project>-<env>-<name>-<id 8자리>`를 만든다 | `resource-sync` workflow만 |
@@ -49,6 +49,7 @@ flowchart LR
 | WorkflowTemplate | 단계 | ServiceAccount | 하는 일 |
 | --- | --- | --- | --- |
 | `app-build` | `checkout` | `delivery-git` | 요청한 ref를 clone하고 commit SHA를 기록한다. Secret `<workflow>-checkout`은 그 저장소만 읽는 자격 증명을 담는다. `ssh-key`(GitHub deploy key)가 있으면 고정한 host key로 `git@github.com`을 읽고, `token`(GitLab deploy token)이 있으면 그 host의 요청 header로만 쓴다. 둘 다 비어 있으면 공개 저장소다 |
+| `app-build-v2` | `checkout` | `delivery-source` | 그 commit의 소스 아카이브(`source`, S3)를 풀고 commit SHA(`revision`)를 기록한다. Agent Runway가 한 사용자의 Git 권한으로 저장소를 읽어 올린 것이며, 이 단계와 클러스터는 Git 자격 증명을 갖지 않는다. 소스에는 `.git`이 없다. 나머지 단계는 `app-build`와 같다. Agent Runway가 이 템플릿만 제출하게 되면 `app-build`를 지운다 |
 | `app-build` | `check-application` | `delivery-runner` | `application.yaml`이 Agent Runway에 적용한 파일과 같은지 SHA-256으로 확인한다. 다르면 exit code 3이다 |
 | `app-build` | `test` | `delivery-runner` | `runtime.test.image`에서 `runtime.test.command`를 실행한다. 없으면 건너뛴다 |
 | `app-build` | `registry` | `delivery-registry` | ECR repository를 만들고, 같은 Release tag(arm64만이면 `<commit>`, 그 밖에는 `<commit>-<arch>-<arch>`)의 이미지가 있으면 재사용한다. 없으면 그 Project에만 push할 수 있는 credential을 만들고 build할 platform을 정한다 |

@@ -1,5 +1,5 @@
 {{- /* One identity per step kind, so app code (test, build) never holds the GitHub token, AWS or Kubernetes access. */}}
-{{- range list "delivery-runner" "delivery-git" "delivery-registry" "delivery-verify" "delivery-target" }}
+{{- range list "delivery-runner" "delivery-git" "delivery-source" "delivery-registry" "delivery-verify" "delivery-target" }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -36,7 +36,7 @@ roleRef:
   kind: Role
   name: delivery-executor
 subjects:
-{{- range list "delivery-runner" "delivery-git" "delivery-registry" "delivery-verify" "delivery-target" }}
+{{- range list "delivery-runner" "delivery-git" "delivery-source" "delivery-registry" "delivery-verify" "delivery-target" }}
   - kind: ServiceAccount
     name: {{ . }}
     namespace: {{ $.Release.Namespace }}
