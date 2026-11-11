@@ -1,6 +1,6 @@
 # ECR prefix of the Project repositories: <account>.dkr.ecr.<region>.amazonaws.com/projects
 registry: ""
-# terraform-env-apps demo/8-app-delivery: the role a build assumes to push to one Project repository.
+# terraform-env-opsp demo/8-app-delivery: the role a build assumes to push to one Project repository.
 pushRoleArn: ""
 region: ap-northeast-2
 gitops:
