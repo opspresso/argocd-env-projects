@@ -6,7 +6,7 @@ import re
 
 import yaml
 
-ENTRYPOINTS = {"app-build": "release", "app-deploy": "deployment", "app-remove": "removal",
+ENTRYPOINTS = {"app-build": "release", "app-build-v2": "release", "app-deploy": "deployment", "app-remove": "removal",
                "app-deploy-eb": "deployment", "app-remove-eb": "removal", "resource-sync": "sync", "env-cleanup": "sweep"}
 
 
@@ -37,7 +37,7 @@ for name, entry in ENTRYPOINTS.items():
     # Agent Runway reads results and logs: Workflows stay 1 day. The build and deploy steps keep every Pod as long,
     # so deployment_logs can return a successful step's output too; resource-sync output is not read.
     assert spec["ttlStrategy"] == {"secondsAfterSuccess": 86400, "secondsAfterFailure": 86400}, name
-    if name in ("app-build", "app-deploy", "app-remove", "app-deploy-eb", "app-remove-eb"):
+    if name in ("app-build", "app-build-v2", "app-deploy", "app-remove", "app-deploy-eb", "app-remove-eb"):
         # Explicit, because the controller's workflowDefaults (OnPodSuccess) apply when podGC is absent.
         assert spec["podGC"] == {"strategy": "OnWorkflowCompletion", "deleteDelayDuration": "24h"}, name
     else:
@@ -94,4 +94,20 @@ assert "git config" not in script and "--global" not in script, "token is not st
 assert '"http.https://${host}/.extraheader=${header}"' in script and '"https://${host}/${path}.git"' in script, "the header is scoped to the repository's host"
 assert '> "$HOME/key"' in script and "/work/key" not in script, "the deploy key stays out of the work volume"
 assert "StrictHostKeyChecking=yes" in script and "UserKnownHostsFile=/etc/delivery/known_hosts" in script, "SSH trusts only the pinned host keys"
+
+# app-build-v2 differs from app-build in its checkout step only: it unpacks the archive Agent Runway uploaded, and no
+# step of the build holds a Git credential or runs git.
+archive = load("app-build-v2")
+legacy = load("app-build")
+same = lambda t: {s["name"]: s for s in t["spec"]["templates"] if s["name"] != "checkout"}
+assert same(archive) == same(legacy), "app-build-v2 keeps every step of app-build except checkout"
+assert {k: v for k, v in archive["spec"].items() if k not in ("templates", "arguments")} == {k: v for k, v in legacy["spec"].items() if k not in ("templates", "arguments")}
+build = {t["name"]: t for t in archive["spec"]["templates"]}
+checkout = build["checkout"]
+assert checkout["serviceAccountName"] == "delivery-source", "checkout reads the archive as delivery-source"
+assert [n for n, t in build.items() if "secretKeyRef" in yaml.safe_dump(t.get("container", {}))] == [], "no build step reads a Secret through its environment"
+assert "volumes" not in checkout, "checkout mounts no Secret or key"
+script = checkout["container"]["args"][0]
+assert "git " not in script and "ssh " not in script, "checkout does not reach a Git host"
+assert 'aws s3 cp --only-show-errors "${SOURCE}"' in script and "s3://*/_sources/*.tar.gz" in script, "checkout reads only a Release source archive"
 
