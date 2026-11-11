@@ -30,12 +30,14 @@ spec:
       - name: environment
       # The Release image: <registry>/<project>@sha256:<digest>.
       - name: image
-      # The declaration of this environment with defaults filled in (JSON {runtime, environment, config}).
+      # The declaration of this environment with defaults filled in (JSON {runtime, environment, config}). Agent Runway
+      # resolves the Project's size into environment.instanceType, replicas (minimum instances) and maxReplicas.
       - name: application
       - name: host
       # The Target without secrets (JSON): kind aws-asg, name, account, region, deployRole, imageId (the golden image
       # AMI), permissionsBoundary, vpcId, instanceSubnets, loadBalancerSubnets, certificateArn, hostedZoneId,
-      # secretsKeyArn, instanceTypes, defaultInstanceType.
+      # secretsKeyArn; optional externalId (a Target in another AWS account) and installScript (runs on each instance
+      # from the user data before the app starts).
       - name: target
   templates:
     - name: deployment
@@ -47,9 +49,10 @@ spec:
             template: verify
             depends: deploy
 
-    # Creates or updates the stack runway-<project>-<environment> (asg-stack.yaml) in the Target account. A new Auto
-    # Scaling group replaces the old one only after its instances signal a healthy app; otherwise CloudFormation rolls
-    # back, so a failed Deployment leaves the previous Release running.
+    # Creates or updates the stack runway-<project>-<environment> (asg-stack.yaml) in the Target account. The instances
+    # run the Target's install script, if any, before the app. A new Auto Scaling group replaces the old one only after
+    # its instances signal a healthy app; otherwise CloudFormation rolls back, so a failed Deployment (also a failed
+    # install script) leaves the previous Release running.
     - name: deploy
       serviceAccountName: delivery-target
       activeDeadlineSeconds: 3300
@@ -70,14 +73,12 @@ spec:
           - |
             . /etc/delivery-scripts/target.sh
             require name region deployRole imageId permissionsBoundary vpcId \
-              instanceSubnets loadBalancerSubnets certificateArn hostedZoneId secretsKeyArn instanceTypes defaultInstanceType
+              instanceSubnets loadBalancerSubnets certificateArn hostedZoneId secretsKeyArn
             printf '%s' "$IMAGE" | grep -qE "^${REGISTRY}/${PROJECT}@sha256:[a-f0-9]{64}$" \
               || { echo "Image $IMAGE is not an image of ${REGISTRY}/${PROJECT} pinned by digest"; exit 1; }
             stack="runway-${PROJECT}-${ENVIRONMENT}"
             secrets_path="/agent-runway/$(field name)/${PROJECT}/${ENVIRONMENT}"
-            instance_type=$(printf '%s' "$APPLICATION" | jq -r --arg default "$(field defaultInstanceType)" '.environment.instanceType // $default')
-            printf '%s' "$TARGET" | jq -e --arg type "$instance_type" '.instanceTypes | index($type)' >/dev/null \
-              || { echo "Instance type $instance_type is not allowed on Target $(field name)"; exit 1; }
+            instance_type=$(instance_type)
             min=$(printf '%s' "$APPLICATION" | jq -r '.environment.replicas // 1')
             max=$(printf '%s' "$APPLICATION" | jq -r '.environment.maxReplicas // .environment.replicas // 1')
             health=$(printf '%s' "$APPLICATION" | jq -r '.runtime.health // "/health"')
@@ -91,6 +92,14 @@ spec:
             app_config=$(printf '%s' "$config" | base64 -w0)
             # A CloudFormation parameter value holds at most 4096 bytes.
             [ "${#app_config}" -le 4096 ] || { echo "The runtime and non-secret Variables exceed 3 KiB for an aws-asg Target"; exit 1; }
+            install_script /tmp/install.sh
+            install=$(compressed /tmp/install.sh)
+            # Three stack parameters hold the script, and the user data holds both values and at most 16 KB in all.
+            [ "${#install}" -le 12288 ] && [ $(( ${#app_config} + ${#install} )) -le 15360 ] \
+              || { echo "The install script and the runtime and non-secret Variables exceed the user data of an aws-asg instance"; exit 1; }
+            install1=$(printf '%s' "$install" | cut -c1-4096)
+            install2=$(printf '%s' "$install" | cut -c4097-8192)
+            install3=$(printf '%s' "$install" | cut -c8193-12288)
             assume_target "deploy-${DEPLOYMENT}"
             # An earlier attempt of this step may have left an operation running; deploy after it ends.
             until status=$(aws cloudformation describe-stacks --stack-name "$stack" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo NONE); \
@@ -109,7 +118,7 @@ spec:
                 "InstanceType=${instance_type}" "MinSize=${min}" "MaxSize=${max}" "HealthPath=${health}" \
                 "SecretsPath=${secrets_path}" "SecretsKeyArn=$(field secretsKeyArn)" \
                 "RepositoryArn=arn:aws:ecr:${registry_region}:${registry_account}:repository/${REGISTRY#*/}/${PROJECT}" \
-                "AppConfig=${app_config}" \
+                "AppConfig=${app_config}" "InstallScript1=${install1}" "InstallScript2=${install2}" "InstallScript3=${install3}" \
               || { aws cloudformation describe-stack-events --stack-name "$stack" --max-items 20 \
                      --query 'StackEvents[?contains(ResourceStatus, `FAILED`)].[LogicalResourceId,ResourceStatusReason]' --output text || true; exit 1; }
         env: &env

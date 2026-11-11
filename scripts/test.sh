@@ -233,6 +233,50 @@ fails "target.sh refuses a deploy role as the bake role" "is not an Agent Runway
   bake_role '{"kind":"aws-asg","region":"ap-northeast-2","bakeRole":"arn:aws:iam::123456789012:role/agent-runway-target-deploy"}'
 fails "target.sh refuses another deploy role" "is not an Agent Runway Target deploy role" \
   target "${target_json/agent-runway-target-deploy/admin}" assume_target test
+# assume_target sends the Target's externalId (a Target in another AWS account) only when the Target has one.
+sts_dir=$(mktemp -d)
+mkdir "$sts_dir/bin"
+cat > "$sts_dir/bin/aws" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$@" > "$STS_DIR/args"
+printf '%s' '{"Credentials":{"AccessKeyId":"a","SecretAccessKey":"s","SessionToken":"t"}}'
+STUB
+chmod +x "$sts_dir/bin/aws"
+sts() { rm -f "$sts_dir/args"; PATH="$sts_dir/bin:$PATH" STS_DIR=$sts_dir "$@" >/dev/null 2>&1 && cat "$sts_dir/args"; }
+external_json=${target_json/\"region\"/\"externalId\":\"9d1c-ab=+,.@:/x\",\"region\"}
+expect "assume_target sends the Target's externalId" ' --external-id 9d1c-ab=\+,\.@:/x ' "$(sts target "$external_json" assume_target test | paste -sd ' ' -)"
+expect "assume_target keeps the session tags with an externalId" '^Key=delivery-project,Value=todo$' "$(sts target "$external_json" assume_target test)"
+refuse "assume_target sends no externalId when the Target has none" '^--external-id$' "$(sts target "$target_json" assume_target test)"
+expect "assume_target assumes the deploy role without an externalId" '^arn:aws:iam::123456789012:role/agent-runway-target-deploy$' "$(sts target "$target_json" assume_target test)"
+expect "the bake role gets the externalId too" '^--external-id$' \
+  "$(sts bake_role '{"kind":"aws-asg","region":"ap-northeast-2","externalId":"abc","bakeRole":"arn:aws:iam::123456789012:role/agent-runway-target-bake"}')"
+fails "assume_target refuses an externalId with other characters" "is not an external ID" \
+  target "${target_json/\"region\"/\"externalId\":\"a b\",\"region\"}" assume_target test
+fails "assume_target refuses a one-character externalId" "is not an external ID" \
+  target "${target_json/\"region\"/\"externalId\":\"a\",\"region\"}" assume_target test
+fails "assume_target refuses an externalId that is not a string" "is not an external ID" \
+  target "${target_json/\"region\"/\"externalId\":12345,\"region\"}" assume_target test
+rm -rf "$sts_dir"
+
+# The instance type comes only from application.environment.instanceType (Agent Runway resolves the Project's size).
+sized() { (APPLICATION=$1; target "$target_json" instance_type); }
+expect "instance_type reads application.environment.instanceType" '^t4g\.small$' "$(sized '{"environment":{"instanceType":"t4g.small"}}')"
+fails "instance_type refuses an application without an instance type" "environment.instanceType is missing" sized '{"environment":{}}'
+fails "instance_type refuses a value that is not an instance type" "is not an instance type" sized '{"environment":{"instanceType":"t4g.small;id"}}'
+
+# install_script writes the Target's installScript; no field gives an empty file.
+script_dir=$(mktemp -d)
+installed() { target "$1" install_script "$script_dir/install.sh" && cat "$script_dir/install.sh"; }
+with_script() { jq -c --arg script "$1" '. + {installScript: $script}' <<<"$target_json"; }
+if installed "$target_json" >/dev/null && [ ! -s "$script_dir/install.sh" ]; then
+  pass "install_script writes nothing without installScript"; else fail "install_script writes nothing without installScript"; fi
+expect "install_script writes the script unchanged" '^touch /tmp/x$' "$(installed "$(with_script "$(printf '#!/bin/bash\ntouch /tmp/x\n')")")"
+expect "install_script accepts #!/bin/sh" '^#!/bin/sh$' "$(installed "$(with_script "$(printf '#!/bin/sh\ntrue\n')")")"
+fails "install_script refuses another interpreter" "must start with #!/bin/bash or #!/bin/sh" installed "$(with_script "$(printf '#!/usr/bin/python3\npass\n')")"
+fails "install_script refuses a script over 16 KiB" "exceeds 16 KiB" installed "$(with_script "#!/bin/bash
+$(printf '#%.0s' $(seq 16374))")"
+fails "install_script refuses a value that is not a string" "must be a string" installed "${target_json/\"region\"/\"installScript\":[1],\"region\"}"
+rm -rf "$script_dir"
 
 # eb-bundle.py: the bundle pins the image, keeps `$` literal and holds no secret value.
 bundle_dir=$(mktemp -d)
@@ -247,6 +291,19 @@ expect "the hook reads only the environment's SSM path" '--path /agent-runway/pr
 expect "the hook is executable" '-rwx' "$(unzip -Z "$bundle_dir/b.zip" .platform/hooks/prebuild/01-runway.sh)"
 fails "the bundle refuses an image outside ECR" "pinned by digest" \
   python3 -I charts/delivery/files/eb-bundle.py "$bundle_dir/app.json" docker.io/library/nginx:latest /agent-runway/prod-eb/todo/prod ap-northeast-2 "$bundle_dir/c.zip"
+refuse "a bundle without an install script has no install hook" '00-install\.sh' "$(unzip -Z1 "$bundle_dir/b.zip")"
+: > "$bundle_dir/empty.sh"
+python3 -I charts/delivery/files/eb-bundle.py "$bundle_dir/app.json" "$eb_image" /agent-runway/prod-eb/todo/prod ap-northeast-2 "$bundle_dir/e.zip" "$bundle_dir/empty.sh"
+refuse "an empty install script adds no install hook" '00-install\.sh' "$(unzip -Z1 "$bundle_dir/e.zip")"
+printf '#!/bin/bash\ndnf -y install htop\n' > "$bundle_dir/install.sh"
+python3 -I charts/delivery/files/eb-bundle.py "$bundle_dir/app.json" "$eb_image" /agent-runway/prod-eb/todo/prod ap-northeast-2 "$bundle_dir/i.zip" "$bundle_dir/install.sh"
+for kind in hooks confighooks; do
+  if unzip -p "$bundle_dir/i.zip" ".platform/${kind}/prebuild/00-install.sh" | cmp -s - "$bundle_dir/install.sh"; then
+    pass "the ${kind} install hook is the Target's script unchanged"; else fail "the ${kind} install hook is the Target's script unchanged"; fi
+  expect "the ${kind} install hook is executable" '^-rwxr-xr-x' "$(unzip -Z "$bundle_dir/i.zip" ".platform/${kind}/prebuild/00-install.sh")"
+done
+expect "the install hook runs before the Variable hook" '^\.platform/hooks/prebuild/00-install\.sh \.platform/hooks/prebuild/01-runway\.sh$' \
+  "$(unzip -Z1 "$bundle_dir/i.zip" | grep '^\.platform/hooks/' | LC_ALL=C sort | paste -sd ' ' -)"
 rm -rf "$bundle_dir"
 
 # runway-app: Variables reach docker run by name only, the values through the environment; the command keeps its order.
@@ -274,6 +331,38 @@ expect "runway-app gives the container the secret value unchanged" '^s3cr\$t$' "
 expect "runway-app maps port 80 to the app port" '^80:8080$' "$run_args"
 expect "runway-app keeps the entrypoint, then its arguments" "$(printf -- '--entrypoint\nnode\n%s\nserver.js\n--port=8080' "$eb_image")" "$(sed -n '/--entrypoint/,$p' "$app_dir/run.args" | paste -sd '\n' -)"
 rm -rf "$app_dir"
+# asg-stack.yaml user data: the install script runs before the app, and its failure is the instance's failure signal.
+ud_dir=$(mktemp -d)
+mkdir -p "$ud_dir/bin" "$ud_dir/etc"
+printf '#!/bin/sh\necho start >> "%s/calls"\n' "$ud_dir" > "$ud_dir/bin/runway-app"
+printf '#!/bin/sh\necho "signal $2" >> "%s/calls"\n' "$ud_dir" > "$ud_dir/bin/cfn-signal"
+chmod +x "$ud_dir/bin/runway-app" "$ud_dir/bin/cfn-signal"
+user_data=$(yq '.Resources.LaunchTemplate.Properties.LaunchTemplateData.UserData."Fn::Base64"[0]' charts/delivery/files/asg-stack.yaml)
+boot() {
+  local script=$1 install=""
+  rm -f "$ud_dir/calls" "$ud_dir/etc/install.sh"
+  if [ -n "$script" ]; then
+    printf '%s' "$script" > "$ud_dir/script.sh"
+    install=$(target "$target_json" compressed "$ud_dir/script.sh")
+  fi
+  printf '%s' "$user_data" | APP_CONFIG=$(printf '{}' | base64) INSTALL=$install UD_DIR=$ud_dir python3 -c '
+import os, sys
+text = sys.stdin.read()
+for name, value in {"AppConfig": os.environ["APP_CONFIG"], "InstallScript": os.environ["INSTALL"],
+                    "AWS::Region": "ap-northeast-2", "AWS::StackName": "runway-todo-prod"}.items():
+    text = text.replace("${" + name + "}", value)
+ud = os.environ["UD_DIR"]
+text = text.replace("/etc/runway/", ud + "/etc/").replace("/usr/local/bin/runway-app", ud + "/bin/runway-app")
+print(text.replace("/opt/aws/bin/cfn-signal", ud + "/bin/cfn-signal"))' > "$ud_dir/user-data.sh"
+  bash "$ud_dir/user-data.sh" >/dev/null 2>&1 || true
+  paste -sd ' ' - < "$ud_dir/calls"
+}
+expect "without an install script the instance starts the app and signals success" '^start signal 0$' "$(boot "")"
+expect "the install script runs before the app" "^installed start signal 0$" \
+  "$(boot "$(printf '#!/bin/bash\necho installed >> %s/calls\n' "$ud_dir")")"
+expect "a failed install script signals its exit code and starts no app" '^signal 3$' "$(boot "$(printf '#!/bin/sh\nexit 3\n')")"
+expect "the instance keeps the install script to itself" '^-rwx------' "$(boot "$(printf '#!/bin/sh\ntrue\n')" >/dev/null; ls -l "$ud_dir/etc/install.sh")"
+rm -rf "$ud_dir"
 expect "deploy refuses an image of another Project" 'is not an image of \$\{REGISTRY\}/\$\{PROJECT\} pinned by digest' "$(cat charts/delivery/files/app-deploy.yaml)"
 
 # resource-sync writes only allowed kro instances of the environment's namespace.

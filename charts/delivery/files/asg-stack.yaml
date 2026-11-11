@@ -6,6 +6,9 @@ AWSTemplateFormatVersion: "2010-09-09"
 # A new Deployment replaces the Auto Scaling group (AutoScalingReplacingUpdate): CloudFormation starts a new group,
 # waits until MinSize instances signal that the app answers on its health path, then deletes the old group. When the
 # new instances do not signal in time the update rolls back and the old group keeps serving.
+#
+# The Target's install script (agent-platform docs/DELIVERY_V4.md D5) runs from the user data before the app starts.
+# When it exits non-zero, the instance signals the failure and does not start the app, so the update rolls back.
 Description: Agent Runway app on an Auto Scaling group
 
 Parameters:
@@ -58,6 +61,17 @@ Parameters:
   AppConfig:
     Type: String
     Description: The base64 of /etc/runway/app.json (image digest, port, health, non-secret Variables, command, args).
+  # The Target's install script as base64 of gzip, split because a parameter value holds at most 4096 bytes. All empty
+  # when the Target has no install script.
+  InstallScript1:
+    Type: String
+    Default: ""
+  InstallScript2:
+    Type: String
+    Default: ""
+  InstallScript3:
+    Type: String
+    Default: ""
 
 Resources:
   # Named <stack>-app so the Target deploy role, which may change only roles and instance profiles named
@@ -174,13 +188,24 @@ Resources:
               - { Key: opspresso.com/delivery-env, Value: !Ref Environment }
               - { Key: opspresso.com/deployment, Value: !Ref DeploymentId }
         UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            set -uo pipefail
-            echo '${AppConfig}' | base64 -d > /etc/runway/app.json
-            chmod 0600 /etc/runway/app.json
-            /usr/local/bin/runway-app start
-            /opt/aws/bin/cfn-signal --exit-code $? --region ${AWS::Region} --stack ${AWS::StackName} --resource Group
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              set -uo pipefail
+              signal() {
+                /opt/aws/bin/cfn-signal --exit-code "$1" --region ${AWS::Region} --stack ${AWS::StackName} --resource Group
+                exit "$1"
+              }
+              echo '${AppConfig}' | base64 -d > /etc/runway/app.json
+              chmod 0600 /etc/runway/app.json
+              if [ -n '${InstallScript}' ]; then
+                (umask 077; echo '${InstallScript}' | base64 -d | gunzip > /etc/runway/install.sh) || signal 1
+                chmod 0700 /etc/runway/install.sh
+                /etc/runway/install.sh || signal $?
+              fi
+              /usr/local/bin/runway-app start
+              signal $?
+            - InstallScript: !Join ["", [!Ref InstallScript1, !Ref InstallScript2, !Ref InstallScript3]]
 
   Group:
     Type: AWS::AutoScaling::AutoScalingGroup
