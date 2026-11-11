@@ -1,10 +1,10 @@
-# Written by the app-deploy workflow for Deployment 256619ba-b808-4ae8-a66d-3a5785ea27fe. Do not edit.
-deployment: 256619ba-b808-4ae8-a66d-3a5785ea27fe
+# Written by the app-deploy workflow for Deployment cbd563df-213b-4b2d-a08f-3af165441149. Do not edit.
+deployment: cbd563df-213b-4b2d-a08f-3af165441149
 app:
   controller:
     enabled: true
   image:
-    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-node-10@sha256:fddcbad6c0688b923a5ebbdfec6a535a04833b4d57727ad3cbe1be954d4d7ec9
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-node-10@sha256:7dec14d7455754ee38b82e454f9f436ae0efa4d59385f881762566d9f1b61968
   replicaCount: 1
   autoscaling:
     enabled: false
@@ -45,7 +45,7 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: 256619ba-b808-4ae8-a66d-3a5785ea27fe
+      force-sync: cbd563df-213b-4b2d-a08f-3af165441149
   configmap:
     enabled: true
     data:
@@ -53,4 +53,6 @@ app:
       CACHE_VALKEY_PORT: "6379"
       CACHE_VALKEY_USERNAME: default
   podAnnotations:
-    opspresso.com/deployment: 256619ba-b808-4ae8-a66d-3a5785ea27fe
+    opspresso.com/deployment: cbd563df-213b-4b2d-a08f-3af165441149
+  nodeSelector:
+    kubernetes.io/arch: arm64
