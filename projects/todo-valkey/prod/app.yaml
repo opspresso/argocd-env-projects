@@ -1,5 +1,5 @@
-# Written by the app-deploy workflow for Deployment e0017798-7301-4759-9e19-099c23613aba. Do not edit.
-deployment: e0017798-7301-4759-9e19-099c23613aba
+# Written by the app-deploy workflow for Deployment fe96e2f4-6053-47d1-9bd3-c1c17199dfc1. Do not edit.
+deployment: fe96e2f4-6053-47d1-9bd3-c1c17199dfc1
 app:
   controller:
     enabled: true
@@ -14,6 +14,8 @@ app:
     enabled: true
     targetPort: 8080
   routing:
+    hosts:
+      - todo-valkey.apps.rovr.dev
     httpRoute:
       enabled: true
   env:
@@ -45,7 +47,7 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: e0017798-7301-4759-9e19-099c23613aba
+      force-sync: fe96e2f4-6053-47d1-9bd3-c1c17199dfc1
   configmap:
     enabled: true
     data:
@@ -53,6 +55,6 @@ app:
       VALKEY_PORT: "6379"
       VALKEY_USERNAME: default
   podAnnotations:
-    opspresso.com/deployment: e0017798-7301-4759-9e19-099c23613aba
+    opspresso.com/deployment: fe96e2f4-6053-47d1-9bd3-c1c17199dfc1
   nodeSelector:
     kubernetes.io/arch: arm64
