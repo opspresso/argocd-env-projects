@@ -1,10 +1,10 @@
-# Written by the app-deploy workflow for Deployment 090e9f65-0dde-4f38-9589-d86986c4e0fb. Do not edit.
-deployment: 090e9f65-0dde-4f38-9589-d86986c4e0fb
+# Written by the app-deploy workflow for Deployment f6954a00-c4ed-4f3a-943a-21e310fbe345. Do not edit.
+deployment: f6954a00-c4ed-4f3a-943a-21e310fbe345
 app:
   controller:
     enabled: true
   image:
-    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-spring-3@sha256:7c026de5ba5392a08e5acaa7759885755bbcd17bc82b415fede89d1a2a138fda
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-spring-3@sha256:90060f5f22f681b6e5108611cf8e79e5f5de0bd8aa845dec8f4987467aeefea0
   replicaCount: 1
   autoscaling:
     enabled: false
@@ -45,6 +45,12 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: 090e9f65-0dde-4f38-9589-d86986c4e0fb
+      force-sync: f6954a00-c4ed-4f3a-943a-21e310fbe345
+  configmap:
+    enabled: true
+    data:
+      CLUSTER_NAME: eks-demo
   podAnnotations:
-    opspresso.com/deployment: 090e9f65-0dde-4f38-9589-d86986c4e0fb
+    opspresso.com/deployment: f6954a00-c4ed-4f3a-943a-21e310fbe345
+  nodeSelector:
+    kubernetes.io/arch: arm64
