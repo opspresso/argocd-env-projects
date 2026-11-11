@@ -1,16 +1,12 @@
-# Shared by the steps of the VM Target Workflows (app-deploy-eb, app-remove-eb, app-deploy-asg, app-remove-asg,
-# image-bake). Source it with `.`.
+# Shared by the steps of the VM Target Workflows (app-deploy-eb, app-remove-eb). Source it with `.`.
 # Checks the parameters, reads the Target JSON and assumes the Target's deploy role. The step's ServiceAccount
-# (delivery-target) may assume only roles named agent-runway-target-deploy and agent-runway-target-bake
-# (terraform-env-demo demo/4-role), and the session tags limit the deploy role to this Project environment's stack.
+# (delivery-target) may assume only roles named agent-runway-target-deploy (terraform-env-demo demo/4-role), and the
+# session tags limit the deploy role to this Project environment's stack.
 # A Target in another AWS account has externalId (agent-platform docs/DELIVERY_V4.md D4), which that account's trust
 # policy requires.
 
-# A Deployment step names a Project environment; the image bake step names none (PROJECT unset).
-if [ -n "${PROJECT:-}" ]; then
-  printf '%s' "$PROJECT" | grep -qE '^[a-z][a-z0-9-]{1,30}[a-z0-9]$' || { echo "Invalid project $PROJECT"; exit 1; }
-  printf '%s' "$ENVIRONMENT" | grep -qE '^[a-z][a-z0-9]{1,11}$' || { echo "Invalid environment $ENVIRONMENT"; exit 1; }
-fi
+printf '%s' "$PROJECT" | grep -qE '^[a-z][a-z0-9-]{1,30}[a-z0-9]$' || { echo "Invalid project $PROJECT"; exit 1; }
+printf '%s' "$ENVIRONMENT" | grep -qE '^[a-z][a-z0-9]{1,11}$' || { echo "Invalid environment $ENVIRONMENT"; exit 1; }
 printf '%s' "$TARGET" | jq -e --arg kind "$TARGET_KIND" '.kind == $kind' >/dev/null \
   || { echo "Target is not of kind $TARGET_KIND"; exit 1; }
 
@@ -31,21 +27,17 @@ list() {
     || { echo "Target field $1 must be a non-empty list" >&2; exit 1; }
 }
 
-# Exports the credentials of the Target's deploy role (or, with ROLE_FIELD=bakeRole, its image bake role) for the rest
-# of the step.
+# Exports the credentials of the Target's deploy role for the rest of the step.
 assume_target() {
-  field_name=${ROLE_FIELD:-deployRole}
-  suffix=deploy
-  [ "$field_name" = bakeRole ] && suffix=bake
-  role=$(field "$field_name")
-  printf '%s' "$role" | grep -qE "^arn:aws:iam::[0-9]{12}:role/agent-runway-target-${suffix}\$" \
-    || { echo "Role $role is not an Agent Runway Target ${suffix} role"; exit 1; }
+  role=$(field deployRole)
+  printf '%s' "$role" | grep -qE '^arn:aws:iam::[0-9]{12}:role/agent-runway-target-deploy$' \
+    || { echo "Role $role is not an Agent Runway Target deploy role"; exit 1; }
   external_id=$(printf '%s' "$TARGET" \
     | jq -er '.externalId // "" | strings | select(. == "" or test("\\A[A-Za-z0-9+=,.@:/-]{2,1224}\\z"))') \
     || { echo "Target field externalId is not an external ID"; exit 1; }
   set -- --role-arn "$role" --role-session-name "$1" --duration-seconds 3600
   [ -n "$external_id" ] && set -- "$@" --external-id "$external_id"
-  [ -n "${PROJECT:-}" ] && set -- "$@" --tags "Key=delivery-project,Value=${PROJECT}" "Key=delivery-env,Value=${ENVIRONMENT}"
+  set -- "$@" --tags "Key=delivery-project,Value=${PROJECT}" "Key=delivery-env,Value=${ENVIRONMENT}"
   session=$(aws sts assume-role "$@" --output json)
   AWS_ACCESS_KEY_ID=$(printf '%s' "$session" | jq -r .Credentials.AccessKeyId)
   AWS_SECRET_ACCESS_KEY=$(printf '%s' "$session" | jq -r .Credentials.SecretAccessKey)
@@ -73,11 +65,4 @@ install_script() {
   [ $(( $(wc -c < "$1") )) -le 16384 ] || { echo "Target field installScript exceeds 16 KiB"; exit 1; }
   head -n 1 "$1" | grep -qE '^#!/bin/(bash|sh)( .*)?$' \
     || { echo "Target field installScript must start with #!/bin/bash or #!/bin/sh"; exit 1; }
-}
-
-# The install script file $1 as base64 of gzip for asg-stack.yaml; nothing when the file is empty. Compressed, a 16 KiB
-# script fits in the 16 KB user data of an instance. mtime=0 keeps the value the same for the same script.
-compressed() {
-  [ -s "$1" ] || return 0
-  python3 -I -c 'import base64, gzip, sys; print(base64.b64encode(gzip.compress(open(sys.argv[1], "rb").read(), 9, mtime=0)).decode())' "$1"
 }

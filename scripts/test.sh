@@ -143,7 +143,7 @@ done
 delivery=$(helm template delivery charts/delivery --namespace app-delivery \
   --set registry=123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects --set pushRoleArn=arn:aws:iam::123456789012:role/app-delivery-push \
   --set 'apiServer.cidrs={172.20.0.1/32,10.10.114.40/32}')
-for name in app-build app-deploy app-remove app-deploy-eb app-remove-eb app-deploy-asg app-remove-asg image-bake resource-sync env-cleanup; do
+for name in app-build app-deploy app-remove app-deploy-eb app-remove-eb resource-sync env-cleanup; do
   expect "delivery renders WorkflowTemplate $name" "^  name: ${name}$" "$delivery"
 done
 secret_verbs=$(yq 'select(.kind == "Role" and .metadata.name == "agent-runway") | .rules[] | select(.resources[] == "secrets") | .verbs | join(",")' <<<"$delivery")
@@ -211,22 +211,10 @@ expect "app-remove-eb takes app-remove's parameters and the Target" '^deployment
 for name in app-deploy-eb app-remove-eb; do
   expect "$name shares the environment mutex" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line $name mutexes)"
 done
-expect "VM Target steps act as delivery-target" '^app-deploy-eb:deploy app-deploy-eb:verify app-remove-eb:remove app-remove-eb:verify app-deploy-asg:deploy app-deploy-asg:verify app-remove-asg:remove app-remove-asg:verify image-bake:build$' "$(line all delivery-target)"
-for name in app-deploy-asg app-remove-asg; do
-  expect "$name shares the environment mutex" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line $name mutexes)"
-done
-expect "app-deploy-asg keeps app-deploy's step names" '^deploy verify$' "$(line app-deploy-asg tasks)"
-expect "app-deploy-asg takes app-deploy's parameters and the Target" '^deployment project environment image application host target$' "$(line app-deploy-asg parameters)"
-expect "app-deploy-asg returns url" '^url$' "$(line app-deploy-asg outputs)"
-expect "app-remove-asg keeps app-remove's step names" '^remove verify$' "$(line app-remove-asg tasks)"
-expect "image-bake takes the image, its name and version and the Target" '^image name version target$' "$(line image-bake parameters)"
-expect "image-bake returns imageId" '^imageId$' "$(line image-bake outputs)"
-expect "a replaced Auto Scaling group must signal a healthy app" 'WillReplace: true' "$(cat charts/delivery/files/asg-stack.yaml)"
+expect "VM Target steps act as delivery-target" '^app-deploy-eb:deploy app-deploy-eb:verify app-remove-eb:remove app-remove-eb:verify$' "$(line all delivery-target)"
 expect "app-deploy-eb refuses an image of another Project" 'is not an image of \$\{REGISTRY\}/\$\{PROJECT\} pinned by digest' "$(cat charts/delivery/files/app-deploy-eb.yaml)"
 if command -v cfn-lint >/dev/null; then
-  for stack in eb asg; do
-    if cfn-lint "charts/delivery/files/${stack}-stack.yaml"; then pass "cfn-lint accepts the aws-${stack} stack"; else fail "cfn-lint accepts the aws-${stack} stack"; fi
-  done
+  if cfn-lint charts/delivery/files/eb-stack.yaml; then pass "cfn-lint accepts the aws-eb stack"; else fail "cfn-lint accepts the aws-eb stack"; fi
 else
   echo "skip cfn-lint (not installed)"
 fi
@@ -237,10 +225,6 @@ target() { (PROJECT=todo ENVIRONMENT=prod TARGET_KIND=aws-eb TARGET=$1; set -eu;
 expect "target.sh joins a list field" '^subnet-a,subnet-b$' "$(target "$target_json" list instanceSubnets)"
 fails "target.sh refuses another kind" "is not of kind aws-eb" target '{"kind":"aws-eks"}' true
 fails "target.sh refuses a missing field" "Target field vpcId is missing" target "$target_json" require name vpcId
-# The bake step names no Project; its role must be the Target's bake role.
-bake_role() { (unset PROJECT ENVIRONMENT; TARGET_KIND=aws-asg TARGET=$1 ROLE_FIELD=bakeRole; set -eu; . charts/delivery/files/target.sh; assume_target test); }
-fails "target.sh refuses a deploy role as the bake role" "is not an Agent Runway Target bake role" \
-  bake_role '{"kind":"aws-asg","region":"ap-northeast-2","bakeRole":"arn:aws:iam::123456789012:role/agent-runway-target-deploy"}'
 fails "target.sh refuses another deploy role" "is not an Agent Runway Target deploy role" \
   target "${target_json/agent-runway-target-deploy/admin}" assume_target test
 # assume_target sends the Target's externalId (a Target in another AWS account) only when the Target has one.
@@ -258,8 +242,6 @@ expect "assume_target sends the Target's externalId" ' --external-id 9d1c-ab=\+,
 expect "assume_target keeps the session tags with an externalId" '^Key=delivery-project,Value=todo$' "$(sts target "$external_json" assume_target test)"
 refuse "assume_target sends no externalId when the Target has none" '^--external-id$' "$(sts target "$target_json" assume_target test)"
 expect "assume_target assumes the deploy role without an externalId" '^arn:aws:iam::123456789012:role/agent-runway-target-deploy$' "$(sts target "$target_json" assume_target test)"
-expect "the bake role gets the externalId too" '^--external-id$' \
-  "$(sts bake_role '{"kind":"aws-asg","region":"ap-northeast-2","externalId":"abc","bakeRole":"arn:aws:iam::123456789012:role/agent-runway-target-bake"}')"
 fails "assume_target refuses an externalId with other characters" "is not an external ID" \
   target "${target_json/\"region\"/\"externalId\":\"a b\",\"region\"}" assume_target test
 fails "assume_target refuses a one-character externalId" "is not an external ID" \
@@ -316,63 +298,6 @@ expect "the install hook runs before the Variable hook" '^\.platform/hooks/prebu
   "$(unzip -Z1 "$bundle_dir/i.zip" | grep '^\.platform/hooks/' | LC_ALL=C sort | paste -sd ' ' -)"
 rm -rf "$bundle_dir"
 
-# runway-app: Variables reach docker run by name only, the values through the environment; the command keeps its order.
-app_dir=$(mktemp -d)
-mkdir "$app_dir/bin"
-cat > "$app_dir/bin/aws" <<'STUB'
-#!/bin/sh
-case "$*" in
-  *get-parameters-by-path*) printf '%s' '[["/agent-runway/demo-asg/todo/prod/API_KEY","s3cr$t\nline"]]';;
-  *get-login-password*) printf 'password';;
-esac
-STUB
-cat > "$app_dir/bin/docker" <<'STUB'
-#!/bin/sh
-if [ "$1" = run ]; then printf '%s\n' "$@" > "$APP_DIR/run.args"; printf '%s' "$API_KEY" > "$APP_DIR/run.secret"; fi
-exit 0
-STUB
-chmod +x "$app_dir/bin/aws" "$app_dir/bin/docker"
-printf '%s' "{\"image\":\"${eb_image}\",\"port\":8080,\"health\":\"/health\",\"secretsPath\":\"/agent-runway/demo-asg/todo/prod\",\"region\":\"ap-northeast-2\",\"env\":{\"LOG_LEVEL\":\"debug\"},\"command\":[\"node\",\"server.js\"],\"args\":[\"--port=8080\"],\"healthTimeoutSeconds\":1}" > "$app_dir/app.json"
-PATH="$app_dir/bin:$PATH" APP_DIR=$app_dir RUNWAY_APP_CONFIG=$app_dir/app.json python3 -I charts/delivery/files/images/runway-app.py start >/dev/null 2>&1 || true
-run_args=$(cat "$app_dir/run.args")
-expect "runway-app passes Variables by name" '^API_KEY$' "$run_args"
-refuse "runway-app keeps secret values off the command line" 's3cr' "$run_args"
-expect "runway-app gives the container the secret value unchanged" '^s3cr\$t$' "$(head -n 1 "$app_dir/run.secret")"
-expect "runway-app maps port 80 to the app port" '^80:8080$' "$run_args"
-expect "runway-app keeps the entrypoint, then its arguments" "$(printf -- '--entrypoint\nnode\n%s\nserver.js\n--port=8080' "$eb_image")" "$(sed -n '/--entrypoint/,$p' "$app_dir/run.args" | paste -sd '\n' -)"
-rm -rf "$app_dir"
-# asg-stack.yaml user data: the install script runs before the app, and its failure is the instance's failure signal.
-ud_dir=$(mktemp -d)
-mkdir -p "$ud_dir/bin" "$ud_dir/etc"
-printf '#!/bin/sh\necho start >> "%s/calls"\n' "$ud_dir" > "$ud_dir/bin/runway-app"
-printf '#!/bin/sh\necho "signal $2" >> "%s/calls"\n' "$ud_dir" > "$ud_dir/bin/cfn-signal"
-chmod +x "$ud_dir/bin/runway-app" "$ud_dir/bin/cfn-signal"
-user_data=$(yq '.Resources.LaunchTemplate.Properties.LaunchTemplateData.UserData."Fn::Base64"[0]' charts/delivery/files/asg-stack.yaml)
-boot() {
-  local script=$1 install=""
-  rm -f "$ud_dir/calls" "$ud_dir/etc/install.sh"
-  if [ -n "$script" ]; then
-    printf '%s' "$script" > "$ud_dir/script.sh"
-    install=$(target "$target_json" compressed "$ud_dir/script.sh")
-  fi
-  printf '%s' "$user_data" | APP_CONFIG=$(printf '{}' | base64) INSTALL=$install UD_DIR=$ud_dir python3 -c '
-import os, sys
-text = sys.stdin.read()
-for name, value in {"AppConfig": os.environ["APP_CONFIG"], "InstallScript": os.environ["INSTALL"],
-                    "AWS::Region": "ap-northeast-2", "AWS::StackName": "runway-todo-prod"}.items():
-    text = text.replace("${" + name + "}", value)
-ud = os.environ["UD_DIR"]
-text = text.replace("/etc/runway/", ud + "/etc/").replace("/usr/local/bin/runway-app", ud + "/bin/runway-app")
-print(text.replace("/opt/aws/bin/cfn-signal", ud + "/bin/cfn-signal"))' > "$ud_dir/user-data.sh"
-  bash "$ud_dir/user-data.sh" >/dev/null 2>&1 || true
-  paste -sd ' ' - < "$ud_dir/calls"
-}
-expect "without an install script the instance starts the app and signals success" '^start signal 0$' "$(boot "")"
-expect "the install script runs before the app" "^installed start signal 0$" \
-  "$(boot "$(printf '#!/bin/bash\necho installed >> %s/calls\n' "$ud_dir")")"
-expect "a failed install script signals its exit code and starts no app" '^signal 3$' "$(boot "$(printf '#!/bin/sh\nexit 3\n')")"
-expect "the instance keeps the install script to itself" '^-rwx------' "$(boot "$(printf '#!/bin/sh\ntrue\n')" >/dev/null; ls -l "$ud_dir/etc/install.sh")"
-rm -rf "$ud_dir"
 expect "deploy refuses an image of another Project" 'is not an image of \$\{REGISTRY\}/\$\{PROJECT\} pinned by digest' "$(cat charts/delivery/files/app-deploy.yaml)"
 
 # resource-sync writes only allowed kro instances of the environment's namespace.
@@ -518,7 +443,7 @@ fails "a manifest that is not YAML is refused" "" check <<<"kind: [unclosed"
 
 if command -v argo >/dev/null; then
   # One run: resource-sync and app-remove reference env-cleanup templates.
-  if argo lint --offline charts/delivery/files/{app-build,app-deploy,app-remove,app-deploy-eb,app-remove-eb,app-deploy-asg,app-remove-asg,image-bake,resource-sync,env-cleanup}.yaml >/dev/null; then
+  if argo lint --offline charts/delivery/files/{app-build,app-deploy,app-remove,app-deploy-eb,app-remove-eb,resource-sync,env-cleanup}.yaml >/dev/null; then
     pass "argo lint accepts the WorkflowTemplates"; else fail "argo lint accepts the WorkflowTemplates"; fi
 else
   echo "skip argo lint (argo CLI not installed)"
