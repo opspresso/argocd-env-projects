@@ -1,0 +1,62 @@
+# Written by the app-deploy workflow for Deployment 1e3077d2-b49c-401a-8953-9337861a09f7. Do not edit.
+deployment: 1e3077d2-b49c-401a-8953-9337861a09f7
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo@sha256:ee187187de3116c887e733501bf00753189168805b4b4c2a20617c1ad2ad531e
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    hosts:
+      - todo.apps.rovr.dev
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+    - name: LOG_LEVEL
+      value: info
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: 1e3077d2-b49c-401a-8953-9337861a09f7
+  configmap:
+    enabled: true
+    data:
+      VALKEY_HOST: todo.app-todo-dev.svc.cluster.local
+      VALKEY_PORT: "6379"
+      VALKEY_USERNAME: default
+  podAnnotations:
+    opspresso.com/deployment: 1e3077d2-b49c-401a-8953-9337861a09f7
+  nodeSelector:
+    kubernetes.io/arch: arm64
