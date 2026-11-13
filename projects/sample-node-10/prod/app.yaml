@@ -1,0 +1,56 @@
+# Written by the app-deploy workflow for Deployment cc133256-2e0c-4f6e-8e49-7720d5176791. Do not edit.
+deployment: cc133256-2e0c-4f6e-8e49-7720d5176791
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-node-10@sha256:6699af797e61c437c85cfcd43e3b01bd3afa533baa40b563c3e20a7239b85395
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 3000
+  routing:
+    hosts:
+      - sample-node-10.apps.rovr.dev
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "3000"
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: cc133256-2e0c-4f6e-8e49-7720d5176791
+  configmap:
+    enabled: false
+  podAnnotations:
+    opspresso.com/deployment: cc133256-2e0c-4f6e-8e49-7720d5176791
+  nodeSelector:
+    kubernetes.io/arch: arm64
