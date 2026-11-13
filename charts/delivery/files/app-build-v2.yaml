@@ -35,6 +35,10 @@ spec:
       # image per platform on a node of that architecture and join them in one manifest list. No emulation (QEMU).
       - name: platforms
         value: '["linux/arm64"]'
+      # The Agent Runway pipeline the Release belongs to. Each pipeline builds its own image of a commit, so the image
+      # tags start with it. Empty: the commit tags of a Release requested before pipelines were sent.
+      - name: pipeline
+        value: ""
   # The work volume is scratch space. gp3-ephemeral deletes the EBS volume with its claim; the default gp3 class
   # retains it and leaks one volume per Release.
   volumeClaimTemplates:
@@ -241,7 +245,8 @@ spec:
           - {name: work, mountPath: /work}
 
     # Creates the Project repository and a push credential that only reaches it. An image already built for the
-    # same commit is reused: tags are immutable, so a second build of the commit could not be pushed anyway.
+    # same pipeline, commit and architectures is reused (a repeated attempt of the Release): tags are immutable, so a
+    # second build under the same tag could not be pushed anyway. Another pipeline builds the commit again.
     - name: registry
       serviceAccountName: delivery-registry
       activeDeadlineSeconds: 300
@@ -266,13 +271,18 @@ spec:
               aws ecr describe-images --repository-name "$repository" --image-ids "imageTag=$1" \
                 --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true
             }
-            # The Release tag names the commit and the architectures, so a build for other platforms never meets an
-            # immutable tag of the same commit. arm64 alone keeps the bare commit tag of the images built before.
+            # The Release tag names the pipeline, the commit and the architectures, so a build of another pipeline or
+            # for other platforms never meets an immutable tag of the same commit. A pipeline name starts with a letter
+            # and has at most 31 characters, so <pipeline>-<commit> never equals a tag of the bare commit form.
+            # arm64 alone keeps the bare commit tag.
+            if [ -z "$PIPELINE" ]; then base="$REVISION"
+            elif printf '%s' "$PIPELINE" | LC_ALL=C grep -Eqx '[a-z][a-z0-9-]{1,30}'; then base="${PIPELINE}-${REVISION}"
+            else echo "invalid pipeline"; exit 1; fi
             archs=$(printf '%s' "$PLATFORMS" | jq -r '
               if type == "array" and length > 0 and all(.[]; . == "linux/amd64" or . == "linux/arm64")
               then map(ltrimstr("linux/")) | unique | join(" ") else error("platforms must list linux/amd64 or linux/arm64") end')
             key=$(printf '%s' "$archs" | tr ' ' '-')
-            if [ "$key" = arm64 ]; then tag="$REVISION"; else tag="${REVISION}-${key}"; fi
+            if [ "$key" = arm64 ]; then tag="$base"; else tag="${base}-${key}"; fi
             printf '%s' "$archs" > /work/archs
             printf '%s' "$tag" > /work/tag
             digest=$(existing "$tag")
@@ -293,7 +303,7 @@ spec:
                 builds=$(printf '%s' "$builds" | jq -c --arg arch "$arch" --arg tag "$tag" '. + [{platform: "linux/\($arch)", arch: $arch, tag: $tag, final: "true"}]')
                 continue
               fi
-              part="${REVISION}-build-${arch}"
+              part="${base}-build-${arch}"
               digest=$(existing "$part")
               case "$digest" in sha256:*)
                 echo "Reusing the ${arch} image of ${REVISION}: $digest"
@@ -318,6 +328,7 @@ spec:
           - {name: RELEASE, value: "{{workflow.parameters.release}}"}
           - {name: REVISION, value: "{{inputs.parameters.revision}}"}
           - {name: PLATFORMS, value: "{{workflow.parameters.platforms}}"}
+          - {name: PIPELINE, value: "{{workflow.parameters.pipeline}}"}
           - {name: HOME, value: /tmp}
         envFrom:
           - configMapRef:
