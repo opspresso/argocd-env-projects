@@ -1,5 +1,5 @@
-# Written by the app-deploy workflow for Deployment 3ec86375-c373-4bb0-8f69-9f5828f0eaef. Do not edit.
-deployment: 3ec86375-c373-4bb0-8f69-9f5828f0eaef
+# Written by the app-deploy workflow for Deployment b1b0f5f3-b854-4b65-8ea1-6229d31a6505. Do not edit.
+deployment: b1b0f5f3-b854-4b65-8ea1-6229d31a6505
 app:
   controller:
     enabled: true
@@ -49,7 +49,7 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: 3ec86375-c373-4bb0-8f69-9f5828f0eaef
+      force-sync: b1b0f5f3-b854-4b65-8ea1-6229d31a6505
   configmap:
     enabled: true
     data:
@@ -58,6 +58,6 @@ app:
       PGPORT: "5432"
       PGUSER: delivery_64393a0c0def4f5884c1e0ad597d8987
   podAnnotations:
-    opspresso.com/deployment: 3ec86375-c373-4bb0-8f69-9f5828f0eaef
+    opspresso.com/deployment: b1b0f5f3-b854-4b65-8ea1-6229d31a6505
   nodeSelector:
     kubernetes.io/arch: arm64
