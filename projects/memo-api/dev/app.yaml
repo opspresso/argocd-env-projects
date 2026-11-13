@@ -1,5 +1,5 @@
-# Written by the app-deploy workflow for Deployment 2c9f85bf-f335-4e4d-9cf2-ef77fd184485. Do not edit.
-deployment: 2c9f85bf-f335-4e4d-9cf2-ef77fd184485
+# Written by the app-deploy workflow for Deployment dc9fe820-da5b-4cd5-89e7-eb81254c0e1f. Do not edit.
+deployment: dc9fe820-da5b-4cd5-89e7-eb81254c0e1f
 app:
   controller:
     enabled: true
@@ -15,7 +15,7 @@ app:
     targetPort: 8080
   routing:
     hosts:
-      - memo-api.apps.rovr.dev
+      - memo-api-dev.apps.rovr.dev
     httpRoute:
       enabled: true
   env:
@@ -49,7 +49,7 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: 2c9f85bf-f335-4e4d-9cf2-ef77fd184485
+      force-sync: dc9fe820-da5b-4cd5-89e7-eb81254c0e1f
   configmap:
     enabled: true
     data:
@@ -58,6 +58,6 @@ app:
       PGPORT: "5432"
       PGUSER: delivery_58006ce24ee84218b3e7843bbcd32105
   podAnnotations:
-    opspresso.com/deployment: 2c9f85bf-f335-4e4d-9cf2-ef77fd184485
+    opspresso.com/deployment: dc9fe820-da5b-4cd5-89e7-eb81254c0e1f
   nodeSelector:
     kubernetes.io/arch: arm64
