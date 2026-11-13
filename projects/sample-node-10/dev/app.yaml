@@ -1,10 +1,10 @@
-# Written by the app-deploy workflow for Deployment eca8806e-a217-4b49-b988-c7a775fc4186. Do not edit.
-deployment: eca8806e-a217-4b49-b988-c7a775fc4186
+# Written by the app-deploy workflow for Deployment 920d96c1-728f-482f-8375-c4dc297ed166. Do not edit.
+deployment: 920d96c1-728f-482f-8375-c4dc297ed166
 app:
   controller:
     enabled: true
   image:
-    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-node-10@sha256:6699af797e61c437c85cfcd43e3b01bd3afa533baa40b563c3e20a7239b85395
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/sample-node-10@sha256:efdba82e59d7008760fac5a9bb41f383e38f52a82bbaea70a7ce73bf313f2b88
   replicaCount: 1
   autoscaling:
     enabled: false
@@ -47,10 +47,10 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: eca8806e-a217-4b49-b988-c7a775fc4186
+      force-sync: 920d96c1-728f-482f-8375-c4dc297ed166
   configmap:
     enabled: false
   podAnnotations:
-    opspresso.com/deployment: eca8806e-a217-4b49-b988-c7a775fc4186
+    opspresso.com/deployment: 920d96c1-728f-482f-8375-c4dc297ed166
   nodeSelector:
     kubernetes.io/arch: arm64
