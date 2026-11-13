@@ -1,0 +1,63 @@
+# Written by the app-deploy workflow for Deployment 2c9f85bf-f335-4e4d-9cf2-ef77fd184485. Do not edit.
+deployment: 2c9f85bf-f335-4e4d-9cf2-ef77fd184485
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/memo-api@sha256:674b53b98b8834453fa9bb31fb90c7e8391fdb17b733a917f0923fb27132db9d
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    hosts:
+      - memo-api.apps.rovr.dev
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+    - name: LOG_LEVEL
+      value: info
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: 2c9f85bf-f335-4e4d-9cf2-ef77fd184485
+  configmap:
+    enabled: true
+    data:
+      PGDATABASE: delivery_58006ce24ee84218b3e7843bbcd32105
+      PGHOST: postgres.delivery-pool.svc.cluster.local
+      PGPORT: "5432"
+      PGUSER: delivery_58006ce24ee84218b3e7843bbcd32105
+  podAnnotations:
+    opspresso.com/deployment: 2c9f85bf-f335-4e4d-9cf2-ef77fd184485
+  nodeSelector:
+    kubernetes.io/arch: arm64
