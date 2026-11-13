@@ -178,11 +178,12 @@ contract=$(python3 scripts/workflow_contract.py)
 line() { grep -E "^$1 $2( |$)" <<<"$contract" | cut -d' ' -f3-; }
 build_yaml=$(cat charts/delivery/files/app-build-v2.yaml)
 expect "app-build-v2 keeps the step names Agent Runway maps" '^checkout check-application test registry build manifest result$' "$(line app-build-v2 tasks)"
-expect "app-build-v2 takes the source archive and its commit" '^release project source revision applicationSha256 runtime platforms$' "$(line app-build-v2 parameters)"
+expect "app-build-v2 takes the source archive and its commit" '^release project source revision applicationSha256 runtime platforms pipeline$' "$(line app-build-v2 parameters)"
 expect "app-build-v2 returns revision and image" '^image revision$' "$(line app-build-v2 outputs)"
 expect "builds from an archive are not serialized" '^$' "$(line app-build-v2 mutexes)"
 expect "the archive checkout has its ServiceAccount" '^delivery-source$' "$(yq 'select(.kind == "ServiceAccount" and .metadata.name == "delivery-source") | .metadata.name' <<<"$delivery")"
 expect "the archive checkout reports its result to Argo" 'delivery-source' "$(yq 'select(.kind == "RoleBinding" and .roleRef.name == "delivery-executor") | .subjects[].name' <<<"$delivery")"
+expect "each pipeline builds its own image of a commit" 'base="\$\{PIPELINE\}-\$\{REVISION\}"' "$build_yaml"
 expect "app-build-v2 builds arm64 alone by default" "value: '\\[\"linux/arm64\"\\]'" "$build_yaml"
 expect "each platform builds on a node of its architecture" 'kubernetes.io/arch: "\{\{inputs.parameters.arch\}\}"' "$build_yaml"
 expect "steps run one at a time on the ReadWriteOnce work volume" '^      parallelism: 1$' "$build_yaml"

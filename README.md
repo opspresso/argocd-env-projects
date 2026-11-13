@@ -51,9 +51,9 @@ flowchart LR
 | `app-build-v2` | `checkout` | `delivery-source` | 그 commit의 소스 아카이브(`source`, S3)를 풀고 commit SHA(`revision`)를 기록한다. Agent Runway가 한 사용자의 Git 권한으로 저장소를 읽어 올린 것이며, 이 단계와 클러스터는 Git 자격 증명을 갖지 않는다. 소스에는 `.git`이 없다 |
 | `app-build-v2` | `check-application` | `delivery-runner` | `application.yaml`이 Agent Runway에 적용한 파일과 같은지 SHA-256으로 확인한다. 다르면 exit code 3이다 |
 | `app-build-v2` | `test` | `delivery-runner` | `runtime.test.image`에서 `runtime.test.command`를 실행한다. 없으면 건너뛴다 |
-| `app-build-v2` | `registry` | `delivery-registry` | ECR repository를 만들고, 같은 Release tag(arm64만이면 `<commit>`, 그 밖에는 `<commit>-<arch>-<arch>`)의 이미지가 있으면 재사용한다. 없으면 그 Project에만 push할 수 있는 credential을 만들고 build할 platform을 정한다 |
+| `app-build-v2` | `registry` | `delivery-registry` | ECR repository를 만들고, 같은 Release tag(arm64만이면 `<pipeline>-<commit>`, 그 밖에는 `<pipeline>-<commit>-<arch>-<arch>`)의 이미지가 있으면 재사용한다. 없으면 그 Project에만 push할 수 있는 credential을 만들고 build할 platform을 정한다. `<pipeline>`은 Release가 속한 Agent Runway 파이프라인(parameter `pipeline`)이므로, 다른 파이프라인은 같은 commit도 다시 빌드한다. `pipeline`이 비어 있으면 tag는 `<commit>`으로 시작한다 |
 | `app-build-v2` | `build` | `delivery-runner` | parameter `platforms`(기본 `["linux/arm64"]`)의 platform마다 그 architecture 노드에서 kaniko로 빌드해 push한다. 에뮬레이션(QEMU)은 쓰지 않는다. amd64 노드는 taint가 있는 NodePool `delivery-amd64`(`terraform-env-demo` `demo/6-eks-node`)에서 뜬다. user namespace·privileged가 필요 없다 |
-| `app-build-v2` | `manifest` | `delivery-runner` | platform이 둘 이상이면 platform별 이미지(`<commit>-build-<arch>`)를 manifest list 하나로 묶어 Release tag로 push한다. Release `image`는 그 list의 digest다 |
+| `app-build-v2` | `manifest` | `delivery-runner` | platform이 둘 이상이면 platform별 이미지(`<pipeline>-<commit>-build-<arch>`)를 manifest list 하나로 묶어 Release tag로 push한다. Release `image`는 그 list의 digest다 |
 | `app-deploy` | `deploy` | `delivery-git` | 이미지가 그 Project의 digest 고정 이미지인지 확인하고 `projects/<slug>/<env>/app.yaml`에 기록한다. 이 저장소에만 쓰기 권한이 있는 deploy key(SSM `/k8s/common/app-delivery/gitops-deploy-key`)로 push한다 |
 | `app-deploy` | `verify` | `delivery-verify` | rollout 완료와 `https://<host><health>`의 2xx 응답을 기다린다 |
 | `app-remove` | `remove` | `delivery-git` | `projects/<slug>/<env>/app.yaml`을 지운다. 리소스는 그대로 둔다 |
