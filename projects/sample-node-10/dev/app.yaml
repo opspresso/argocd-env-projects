@@ -1,5 +1,5 @@
-# Written by the app-deploy workflow for Deployment f073be01-e03e-4546-ae4a-5b4af167cdf6. Do not edit.
-deployment: f073be01-e03e-4546-ae4a-5b4af167cdf6
+# Written by the app-deploy workflow for Deployment 6e0ac9b6-eaec-4634-8192-f685ba48d06c. Do not edit.
+deployment: 6e0ac9b6-eaec-4634-8192-f685ba48d06c
 app:
   controller:
     enabled: true
@@ -15,7 +15,7 @@ app:
     targetPort: 3000
   routing:
     hosts:
-      - sample-node-10-dev.apps.rovr.dev
+      - sample-node-10.apps.rovr.dev
     httpRoute:
       enabled: true
   env:
@@ -47,10 +47,10 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: f073be01-e03e-4546-ae4a-5b4af167cdf6
+      force-sync: 6e0ac9b6-eaec-4634-8192-f685ba48d06c
   configmap:
     enabled: false
   podAnnotations:
-    opspresso.com/deployment: f073be01-e03e-4546-ae4a-5b4af167cdf6
+    opspresso.com/deployment: 6e0ac9b6-eaec-4634-8192-f685ba48d06c
   nodeSelector:
     kubernetes.io/arch: arm64
