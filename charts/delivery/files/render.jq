@@ -31,7 +31,7 @@
           + ($e.env // {} | to_entries | sort_by(.key) | map({ name: .key, value: (.value | tostring) }))),
         startupProbe: { httpGet: $probe, periodSeconds: 5, failureThreshold: 36 },
         readinessProbe: { httpGet: $probe, periodSeconds: 10, failureThreshold: 3 },
-        livenessProbe: { httpGet: $probe, periodSeconds: 20, failureThreshold: 3 },
+        livenessProbe: { httpGet: { path: ($r.liveness // $r.health), port: "http" }, periodSeconds: 20, failureThreshold: 3 },
         resources: { requests: { cpu: $e.cpu, memory: $e.memory }, limits: { memory: $e.memory } },
         # Each Deployment refreshes app-env before the rollout (ExternalSecret sync-wave -1) and restarts the Pods,
         # so they read Variables created moments before, and verify can find this rollout.

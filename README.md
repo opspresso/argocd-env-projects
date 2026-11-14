@@ -123,3 +123,7 @@ Agent Runway 콘솔에서 환경을 추가하면 됩니다. 이 저장소와 arg
 - 환경의 Application은 그 디렉터리가 없어질 때 지워집니다. 서비스와 리소스를 모두 삭제하면 `env-cleanup`이 디렉터리를 지웁니다.
 - 성공·실패한 Workflow는 1일 동안 남습니다. `app-build-v2`·`app-deploy`는 성공·실패와 관계없이 단계 Pod와 로그도 같은 기간 남아
   Agent Runway의 `deployment_logs`로 읽을 수 있습니다. `resource-sync`는 실패한 Workflow의 Pod만 남깁니다.
+
+### 앱 준비 상태와 생존 확인
+
+`runtime.health`는 startup·readiness probe와 배포 검증에 사용합니다. 선택 필드 `runtime.liveness`는 EKS liveness probe에만 사용하며, 생략하면 `health`와 같은 경로입니다. DB를 쓰는 새 앱은 준비 상태 경로에서 현재 DB 연결을 확인하고, 생존 경로에서는 프로세스 응답만 확인합니다. DB 장애가 트래픽을 중단하되 불필요한 Pod 재시작을 일으키지 않도록 두 경로를 분리합니다. EB의 상태 확인은 계속 `runtime.health`를 사용합니다.

@@ -45,6 +45,11 @@ fails "an unknown architecture is refused" "architecture must be amd64 or arm64"
   render "$(jq -c '.environment.architecture = "s390x"' <<<"$DEV_APP")" "$(printf 'a%.0s' $(seq 64))" todo-dev.apps.rovr.dev
 
 dev=$(app todo dev tests/app/dev.yaml)
+split_probes=$(app todo dev <(render "$(jq -c '.runtime.health = "/ready" | .runtime.liveness = "/live"' <<<"$DEV_APP")" "$(printf 'a%.0s' $(seq 64))" todo-dev.apps.rovr.dev))
+probe_paths=$(yq -r 'select(.kind == "Deployment") | .spec.template.spec.containers[0] | [.startupProbe.httpGet.path, .readinessProbe.httpGet.path, .livenessProbe.httpGet.path] | join(",")' <<<"$split_probes")
+expect "dependency readiness and process liveness use separate paths" '^/ready,/ready,/live$' "$probe_paths"
+legacy_paths=$(yq -r 'select(.kind == "Deployment") | .spec.template.spec.containers[0] | [.startupProbe.httpGet.path, .readinessProbe.httpGet.path, .livenessProbe.httpGet.path] | join(",")' <<<"$dev")
+expect "declarations without liveness keep the shared health path" '^/health,/health,/health$' "$legacy_paths"
 expect "the host is the one app.yaml carries" '"todo-dev.apps.rovr.dev"' "$dev"
 expect "image is pinned by digest" 'projects/todo@sha256:a{64}' "$dev"
 expect "PORT follows runtime.port" 'value: "8080"' "$dev"
