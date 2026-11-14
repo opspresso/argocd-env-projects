@@ -1,10 +1,10 @@
-# Written by the app-deploy workflow for Deployment 004a73a8-cae3-4d03-ac4c-6e1aee791a9d. Do not edit.
-deployment: 004a73a8-cae3-4d03-ac4c-6e1aee791a9d
+# Written by the app-deploy workflow for Deployment 7f97d160-0876-498a-b9cd-1e0fd807033e. Do not edit.
+deployment: 7f97d160-0876-498a-b9cd-1e0fd807033e
 app:
   controller:
     enabled: true
   image:
-    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo-api@sha256:5d9ae9852588f038a3f8ac5fe5519de88ea3058f0c696d167ed7763501fe04f7
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo-api@sha256:fc30e4b578359caa4971282f7b92b2e64dc3f2342119136341cf1f94e0e23e4c
   replicaCount: 1
   autoscaling:
     enabled: false
@@ -47,7 +47,7 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: 004a73a8-cae3-4d03-ac4c-6e1aee791a9d
+      force-sync: 7f97d160-0876-498a-b9cd-1e0fd807033e
   configmap:
     enabled: true
     data:
@@ -56,6 +56,6 @@ app:
       PGPORT: "5432"
       PGUSER: delivery_a9022a5b6fd949558d82769ab011c30d
   podAnnotations:
-    opspresso.com/deployment: 004a73a8-cae3-4d03-ac4c-6e1aee791a9d
+    opspresso.com/deployment: 7f97d160-0876-498a-b9cd-1e0fd807033e
   nodeSelector:
     kubernetes.io/arch: arm64
