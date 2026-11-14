@@ -1,10 +1,10 @@
-# Written by the app-deploy workflow for Deployment dc9fe820-da5b-4cd5-89e7-eb81254c0e1f. Do not edit.
-deployment: dc9fe820-da5b-4cd5-89e7-eb81254c0e1f
+# Written by the app-deploy workflow for Deployment 9480a7c4-ecd6-4973-9361-abe66bde41b3. Do not edit.
+deployment: 9480a7c4-ecd6-4973-9361-abe66bde41b3
 app:
   controller:
     enabled: true
   image:
-    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/memo-api@sha256:674b53b98b8834453fa9bb31fb90c7e8391fdb17b733a917f0923fb27132db9d
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/memo-api@sha256:9e6f78887112b42447cfb668df6d8cba706b1b903105f22462eeb144d9a24148
   replicaCount: 1
   autoscaling:
     enabled: false
@@ -49,15 +49,16 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: dc9fe820-da5b-4cd5-89e7-eb81254c0e1f
+      force-sync: 9480a7c4-ecd6-4973-9361-abe66bde41b3
   configmap:
     enabled: true
     data:
+      MEMO_MAX_LENGTH: "100"
       PGDATABASE: delivery_58006ce24ee84218b3e7843bbcd32105
       PGHOST: postgres.delivery-pool.svc.cluster.local
       PGPORT: "5432"
       PGUSER: delivery_58006ce24ee84218b3e7843bbcd32105
   podAnnotations:
-    opspresso.com/deployment: dc9fe820-da5b-4cd5-89e7-eb81254c0e1f
+    opspresso.com/deployment: 9480a7c4-ecd6-4973-9361-abe66bde41b3
   nodeSelector:
     kubernetes.io/arch: arm64
