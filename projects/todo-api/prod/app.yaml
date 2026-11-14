@@ -1,0 +1,61 @@
+# Written by the app-deploy workflow for Deployment 0dee5b9b-5f5d-43be-8062-d02583847264. Do not edit.
+deployment: 0dee5b9b-5f5d-43be-8062-d02583847264
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo-api@sha256:2849d63553d24b6616a1b63e3eb0f81ef9c4e7ea17de9a0c7e6701c546fc0a77
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    hosts:
+      - todo-api.apps.rovr.dev
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: 0dee5b9b-5f5d-43be-8062-d02583847264
+  configmap:
+    enabled: true
+    data:
+      PGDATABASE: delivery_7636b5a7ce2147afb16ce466014bfb07
+      PGHOST: postgres.delivery-pool.svc.cluster.local
+      PGPORT: "5432"
+      PGUSER: delivery_7636b5a7ce2147afb16ce466014bfb07
+  podAnnotations:
+    opspresso.com/deployment: 0dee5b9b-5f5d-43be-8062-d02583847264
+  nodeSelector:
+    kubernetes.io/arch: arm64
