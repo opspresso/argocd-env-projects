@@ -132,3 +132,34 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.submitter.serviceAccount }}
     namespace: {{ .Values.submitter.namespace }}
+---
+# Agent Runway's service_logs tool lists the Pods of a Project environment's app and reads the tail of the app
+# container's log, so an Agent can tell why a deployed app is unhealthy. Kubernetes RBAC cannot select app-* namespaces,
+# and the app chart's rbac setting binds only the app's own ServiceAccount, so a RoleBinding per namespace is not
+# possible without a template of charts/app. The grant is therefore cluster-wide; Agent Runway asks only for the
+# namespace app-<project>-<environment> and the label app.kubernetes.io/name=app. Read only: no get of a single Pod,
+# no exec, no Secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-runway-services
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-runway-services
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agent-runway-services
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.submitter.serviceAccount }}
+    namespace: {{ .Values.submitter.namespace }}
