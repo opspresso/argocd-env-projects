@@ -146,18 +146,19 @@ done
 runway_rules=$(yq 'select(.kind == "Role" and .metadata.name == "agent-runway") | .rules[] | (.resources | join(",")) + " " + (.verbs | join(","))' <<<"$delivery" | paste -sd '|' -)
 if [ "$runway_rules" = "workflows create,get,list|pods get,list|pods/log get" ]; then pass "Agent Runway may only submit Workflows and read their Pods and logs"; else fail "Agent Runway may only submit Workflows and read their Pods and logs ($runway_rules)"; fi
 expect "Agent Runway may submit Workflows" 'name: agent-runway' "$delivery"
-for kind in RoleBinding ClusterRoleBinding; do
-  name=agent-runway
-  [ "$kind" = ClusterRoleBinding ] && name=agent-runway-resources
+for binding in RoleBinding/agent-runway ClusterRoleBinding/agent-runway-resources ClusterRoleBinding/agent-runway-services; do
+  kind=${binding%%/*}; name=${binding#*/}
   subjects=$(yq "select(.kind == \"$kind\" and .metadata.name == \"$name\") | .subjects | map(.namespace + \"/\" + .name) | join(\",\")" <<<"$delivery")
   if [ "$subjects" = "agent-runway/agent-runway" ]; then
-    pass "$kind permits the Runway identity"
+    pass "$binding permits the Runway identity"
   else
-    fail "$kind has unexpected submitter identities ($subjects)"
+    fail "$binding has unexpected submitter identities ($subjects)"
   fi
 done
 resource_verbs=$(yq 'select(.kind == "ClusterRole" and .metadata.name == "agent-runway-resources") | .rules[] | (.apiGroups | join(",")) + " " + (.verbs | join(","))' <<<"$delivery" | paste -sd '|' -)
 if [ "$resource_verbs" = "kro.run get,list,watch|apps get" ]; then pass "Agent Runway may only read kro instances and StatefulSets"; else fail "Agent Runway may only read kro instances and StatefulSets ($resource_verbs)"; fi
+service_rules=$(yq 'select(.kind == "ClusterRole" and .metadata.name == "agent-runway-services") | .rules[] | (.apiGroups | join(",")) + "/" + (.resources | join(",")) + " " + (.verbs | join(","))' <<<"$delivery" | paste -sd '|' -)
+if [ "$service_rules" = "/pods list|/pods/log get" ]; then pass "Agent Runway may only list app Pods and read their logs"; else fail "Agent Runway may only list app Pods and read their logs ($service_rules)"; fi
 cron=$(yq 'select(.kind == "CronWorkflow")' <<<"$delivery")
 expect "the cleanup sweep runs every 15 minutes" '^ *- "?\*/15 \* \* \* \*"?$' "$cron"
 expect "the cleanup sweep runs from its WorkflowTemplate (reference mode)" 'workflowTemplateRef:' "$cron"
