@@ -1,0 +1,61 @@
+# Written by the app-deploy workflow for Deployment fead0bac-c0bf-4f1e-8193-a1b1a4e111b5. Do not edit.
+deployment: fead0bac-c0bf-4f1e-8193-a1b1a4e111b5
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/guestbook-api@sha256:62b4ea1ae7011bdfc019d60f1792f64d92ae6aeb07d1a9091db01e65441084ca
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    hosts:
+      - guestbook-api.apps.rovr.dev
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: fead0bac-c0bf-4f1e-8193-a1b1a4e111b5
+  configmap:
+    enabled: true
+    data:
+      PGDATABASE: delivery_ad5706dbbfc240d3853fd59e4885b8c1
+      PGHOST: postgres.delivery-pool.svc.cluster.local
+      PGPORT: "5432"
+      PGUSER: delivery_ad5706dbbfc240d3853fd59e4885b8c1
+  podAnnotations:
+    opspresso.com/deployment: fead0bac-c0bf-4f1e-8193-a1b1a4e111b5
+  nodeSelector:
+    kubernetes.io/arch: arm64
