@@ -5,6 +5,19 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Agent Runway app on Elastic Beanstalk (native Java)
 
 Parameters:
+  Bootstrap:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Only the platform-owned preparation bundle may run before the environment ID is known.
+  EbEnvironmentId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^e-[a-z0-9]{10}$"
+  EbEnvironmentName:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[A-Za-z0-9-]{4,40}$"
   Project:
     Type: String
     AllowedPattern: "^[a-z][a-z0-9-]{1,30}[a-z0-9]$"
@@ -66,7 +79,19 @@ Parameters:
     Type: String
     Description: The KMS key of the SecureString Variables.
 
+Rules:
+  UserCodeNeedsScopedRole:
+    Assertions:
+      - Assert: !Or
+          - !Equals [!Ref Bootstrap, "true"]
+          - !And
+            - !Not [!Equals [!Ref EbEnvironmentId, ""]]
+            - !Not [!Equals [!Ref EbEnvironmentName, ""]]
+        AssertDescription: User code requires a known EB environment ID and name for its instance permissions.
+
 Conditions:
+  HasEnvironmentId: !Not [!Equals [!Ref EbEnvironmentId, ""]]
+  UserRelease: !Equals [!Ref Bootstrap, "false"]
   AllAtOnce: !Equals [!Ref Rollout, AllAtOnce]
 
 Resources:
@@ -84,13 +109,42 @@ Resources:
           - Effect: Allow
             Principal: { Service: ec2.amazonaws.com }
             Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - !Sub arn:${AWS::Partition}:iam::aws:policy/AWSElasticBeanstalkWebTier
       Policies:
         - PolicyName: runway-app
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
+              # AWS's web-tier managed policy permits reading other environments' bundles and logs.
+              # Bootstrap runs platform code only; the workflow scopes this policy before publishing user code.
+              - Effect: Allow
+                Action: [s3:GetBucketLocation]
+                Resource: !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}
+              - Effect: Allow
+                Action: [s3:ListBucket]
+                Resource: !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}
+                Condition:
+                  StringLike:
+                    s3:prefix: !If
+                      - HasEnvironmentId
+                      - !Sub resources/environments/${EbEnvironmentId}/*
+                      - resources/environments/*
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:GetObjectAcl, s3:PutObject]
+                Resource: !If
+                  - HasEnvironmentId
+                  - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/${EbEnvironmentId}/*
+                  - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/*
+              - Effect: Allow
+                Action: [logs:PutLogEvents, logs:CreateLogStream, logs:DescribeLogStreams]
+                Resource: !If
+                  - HasEnvironmentId
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/elasticbeanstalk/${EbEnvironmentName}/*
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/elasticbeanstalk/*
+              - Effect: Allow
+                Action: [elasticbeanstalk:PutInstanceStatistics]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:elasticbeanstalk:${AWS::Region}:${AWS::AccountId}:application/${AWS::StackName}
+                  - !Sub arn:${AWS::Partition}:elasticbeanstalk:${AWS::Region}:${AWS::AccountId}:environment/${AWS::StackName}/*
               - Effect: Allow
                 Action: [ssm:GetParameter]
                 Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPath}/*
@@ -171,6 +225,7 @@ Resources:
         - { Namespace: aws:elasticbeanstalk:cloudwatch:logs, OptionName: DeleteOnTerminate, Value: "true" }
 
   Record:
+    Condition: UserRelease
     Type: AWS::Route53::RecordSet
     Properties:
       HostedZoneId: !Ref HostedZoneId

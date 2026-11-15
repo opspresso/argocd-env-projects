@@ -3,7 +3,7 @@
 Working rules for coding agents in this repository (`CLAUDE.md` is a symlink to this file).
 
 This repository is the GitOps home of the apps that Agent Runway deploys. The contract is
-`agent-platform/docs/APP_DELIVERY.md` and `docs/DELIVERY_V2.md`; [README.md](README.md) explains the layout and the Delivery steps.
+`agent-platform/docs/APP_DELIVERY.md` and `../agent-platform/docs/DELIVERY_V2.md`; [README.md](README.md) explains the layout and the Delivery steps.
 
 ## Ownership
 
@@ -79,3 +79,8 @@ Run `./scripts/test.sh` after every chart change (Helm 4, `jq`, `yq`, Python wit
 Write docs in Korean and this file in English, following ISO 24495-1 and ASD-STE100.
 
 Native EB deploys JAR/WAR from Nexus and verifies its recorded SHA-256 and size. Its bundle contains no Docker runtime or registry credential. The selected solution stack must match the native format and Java/Tomcat version.
+
+EB instance roles never use AWSElasticBeanstalkWebTier. New environments run only the fixed bootstrap bundle until
+a separate stack update scopes S3 access to their EB environment ID and logs to their environment name.
+The workflow verifies that scope before uploading or executing user code. Existing environments keep their current
+version during the scope-only update. Never treat a failed stack lookup as absence.

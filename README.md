@@ -139,3 +139,17 @@ Nexus 이미지 tag는 `<pipeline>-<Release ID>`, 파일 경로는 `<project>/<p
 EB는 Java SE의 executable JAR 또는 Tomcat의 ROOT.war를 실행한다. Docker Compose와 instance ECR pull은 사용하지 않는다.
 현재 Java 플랫폼의 `environmentsecrets` 기능으로 SSM ARN만 전달하며 secret 값을 bundle에 저장하지 않는다.
 기존 ECR workflow와 호환되지 않으므로 진행 중인 배포를 끝내고, 서비스·workflow·Nexus 설정을 함께 전환한다.
+
+### EB 환경별 산출물 권한
+
+EB 기본 `AWSElasticBeanstalkWebTier` 정책은 다른 환경의 S3 번들도 읽을 수 있으므로 사용하지 않습니다.
+인스턴스 역할은 해당 EB 환경 ID의 S3 경로와 환경 이름의 CloudWatch 로그만 읽거나 쓸 수 있습니다.
+SSM은 해당 Project·환경 경로만 허용합니다.
+
+새 환경은 사용자 코드·설정·설치 스크립트·시크릿 참조가 없는 플랫폼 준비 앱으로 먼저 만듭니다.
+환경 ID를 조회한 뒤 별도의 CloudFormation 업데이트로 역할 범위를 제한합니다.
+이 업데이트와 정책 재조회가 성공한 뒤에만 사용자 번들을 올려 배포합니다. 준비 앱에는 사용자 도메인을 연결하지 않습니다.
+기존 환경은 현재 번들을 유지하는 권한 업데이트부터 수행합니다.
+조회 오류는 환경 부재로 처리하지 않습니다. 권한 제한 실패나 환경 소유권 불일치가 있으면 사용자 코드 배포를 중단합니다.
+
+근거: [AWS의 환경 간 S3 접근 제한 안내](https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/AWSHowTo.iam.cross-env-s3-access.html).

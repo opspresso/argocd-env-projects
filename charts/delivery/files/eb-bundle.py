@@ -7,10 +7,41 @@ import json
 import re
 import sys
 import zipfile
+import io
 from pathlib import Path
 
 VARIABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SECRETS_PATH = re.compile(r"^/agent-runway/[a-z0-9-]+/[a-z0-9-]+/[a-z0-9]+$")
+
+
+def bootstrap(format_, out):
+    """Trusted preparation app: no user artifact, command, hook, config or secret reference."""
+    if format_ not in ("jar", "war"):
+        raise ValueError("native format must be jar or war")
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        if format_ == "jar":
+            bundle.writestr("Procfile", "web: python3 runway-bootstrap.py\n")
+            bundle.writestr("runway-bootstrap.py", """from http.server import BaseHTTPRequestHandler, HTTPServer
+class Ready(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b'Preparing deployment'
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+HTTPServer(('0.0.0.0', 5000), Ready).serve_forever()
+""")
+        else:
+            war = io.BytesIO()
+            with zipfile.ZipFile(war, "w", compression=zipfile.ZIP_DEFLATED) as app:
+                app.writestr("WEB-INF/web.xml", """<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns="http://xmlns.jcp.org/xml/ns/javaee" version="3.1">
+  <servlet><servlet-name>bootstrap</servlet-name><jsp-file>/index.jsp</jsp-file></servlet>
+  <servlet-mapping><servlet-name>bootstrap</servlet-name><url-pattern>/*</url-pattern></servlet-mapping>
+</web-app>
+""")
+                app.writestr("index.jsp", '<%@ page contentType="text/plain" %>Preparing deployment')
+            bundle.writestr("ROOT.war", war.getvalue())
 
 
 def main(application_file, artifact_file, secrets_path, region, account, out, install_file=""):
@@ -66,6 +97,9 @@ def main(application_file, artifact_file, secrets_path, region, account, out, in
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 4 and sys.argv[1] == "bootstrap":
+        bootstrap(sys.argv[2], sys.argv[3])
+        sys.exit(0)
     if len(sys.argv) not in (7, 8):
         sys.exit(__doc__)
     main(*sys.argv[1:])

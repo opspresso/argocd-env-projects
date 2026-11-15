@@ -11,6 +11,7 @@ fail() { printf 'FAIL %s\n' "$1"; failures=$((failures + 1)); }
 helm dependency build charts/app >/dev/null
 python3 scripts/test_native_artifacts.py
 python3 scripts/test_http_health.py
+python3 scripts/test_eb_isolation.py
 # A workload values file without a host.
 hostless=$(mktemp); trap 'rm -f "$hostless"' EXIT
 
