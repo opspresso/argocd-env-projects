@@ -138,6 +138,7 @@ done
 # Every deployed environment renders: its directory is an allowed environment and its app.yaml a valid workload with
 # the host Agent Runway chose.
 for values in projects/*/*/app.yaml; do
+  [ -f "$values" ] || continue
   environment=$(basename "$(dirname "$values")"); project=$(basename "$(dirname "$(dirname "$values")")")
   expect "$values deploys its workload" 'kind: Deployment' "$(app "$project" "$environment" "$values" 2>&1)"
 done
