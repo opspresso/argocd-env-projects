@@ -1,0 +1,63 @@
+# Written by the app-deploy workflow for Deployment 8b02c8f2-4c2a-4703-855e-756d78820a06. Do not edit.
+deployment: 8b02c8f2-4c2a-4703-855e-756d78820a06
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/inventory-demo-1115@sha256:7d53e52e4220a8499c44fe6e1913d7ffcd94f884318f3f8d6ff1e2843f000bde
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    hosts:
+      - inventory-demo-1115-dev.apps.rovr.dev
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+    - name: LOG_LEVEL
+      value: info
+  startupProbe:
+    httpGet:
+      path: /ready
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: 8b02c8f2-4c2a-4703-855e-756d78820a06
+  configmap:
+    enabled: true
+    data:
+      PGDATABASE: delivery_8ec45467ca2842d6bd28719659bc97c9
+      PGHOST: postgres.delivery-pool.svc.cluster.local
+      PGPORT: "5432"
+      PGUSER: delivery_8ec45467ca2842d6bd28719659bc97c9
+  podAnnotations:
+    opspresso.com/deployment: 8b02c8f2-4c2a-4703-855e-756d78820a06
+  nodeSelector:
+    kubernetes.io/arch: arm64
