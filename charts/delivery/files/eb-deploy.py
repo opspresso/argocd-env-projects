@@ -49,7 +49,7 @@ def deploy(parameters, region, bundle, bootstrap_bundle, call=aws, pause=time.sl
         current = None
     bucket = parameters["VersionBucket"]
     if current is None:
-        key = f"_bootstrap/{parameters['Project']}/{parameters['Environment']}/{parameters['DeploymentId']}.zip"
+        key = f"{parameters['Project']}/{parameters['Environment']}/_bootstrap/{parameters['DeploymentId']}.zip"
         call("s3", "cp", "--only-show-errors", bootstrap_bundle, f"s3://{bucket}/{key}")
         print(f"Creating {stack} with platform bootstrap code", flush=True)
         update({**parameters, "VersionKey": key, "Bootstrap": "true", "EbEnvironmentId": "", "EbEnvironmentName": ""})
