@@ -233,7 +233,9 @@ spec:
           opspresso.com/delivery-role: runner
       container:
         image: "{{inputs.parameters.image}}"
-        command: [/bin/sh, /work/test.sh]
+        command:
+          - /bin/sh
+          - -euc
         workingDir: /work/src
         env:
           - {name: HOME, value: /tmp}
@@ -248,6 +250,10 @@ spec:
         volumeMounts:
           - {name: work, mountPath: /work}
 
+        args:
+          - |
+            umask 0002
+            exec /bin/sh -eu /work/test.sh
       nodeSelector:
         kubernetes.io/arch: '{{inputs.parameters.arch}}'
       tolerations:
@@ -328,6 +334,7 @@ spec:
           - -euc
         args:
           - |
+            umask 0002
             context=$(cat /work/context)
             cd "/work/src/$context"
             exec /bin/sh -eu /work/build.sh
