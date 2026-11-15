@@ -56,11 +56,14 @@ spec:
             require region deployRole
             stack="runway-${PROJECT}-${ENVIRONMENT}"
             assume_target "remove-${DEPLOYMENT}"
-            if ! aws cloudformation describe-stacks --stack-name "$stack" >/dev/null 2>&1; then
+            status=$(python3 -I /etc/delivery-scripts/eb-deploy.py status "$stack")
+            if [ "$status" = NONE ] || [ "$status" = DELETE_COMPLETE ]; then
               echo "Stack $stack does not exist"; exit 0
             fi
             echo "Deleting stack $stack (Deployment ${DEPLOYMENT})"
-            aws cloudformation delete-stack --stack-name "$stack"
+            if [ "$status" != DELETE_IN_PROGRESS ]; then
+              aws cloudformation delete-stack --stack-name "$stack"
+            fi
             aws cloudformation wait stack-delete-complete --stack-name "$stack" \
               || { aws cloudformation describe-stack-events --stack-name "$stack" --max-items 20 \
                      --query 'StackEvents[?contains(ResourceStatus, `FAILED`)].[LogicalResourceId,ResourceStatusReason]' --output text || true; exit 1; }
@@ -114,8 +117,8 @@ spec:
             require region deployRole
             assume_target "verify-${DEPLOYMENT}"
             stack="runway-${PROJECT}-${ENVIRONMENT}"
-            if status=$(aws cloudformation describe-stacks --stack-name "$stack" --query 'Stacks[0].StackStatus' --output text 2>/dev/null) \
-              && [ "$status" != DELETE_COMPLETE ]; then
+            status=$(python3 -I /etc/delivery-scripts/eb-deploy.py status "$stack")
+            if [ "$status" != NONE ] && [ "$status" != DELETE_COMPLETE ]; then
               echo "Stack $stack still exists ($status)"; exit 1
             fi
             echo "Stack $stack is deleted"
