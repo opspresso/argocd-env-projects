@@ -26,7 +26,9 @@ ENV_ID = "e-0123456789"
 ENV_NAME = "runway-fixture-dev"
 STACK = "runway-fixture-dev"
 ARN = "arn:aws:elasticbeanstalk:ap-northeast-2:123456789012:environment/runway-fixture-dev/" + ENV_NAME
-OWN = "arn:aws:s3:::elasticbeanstalk-ap-northeast-2-123456789012/resources/environments/" + ENV_ID + "/*"
+BUCKET = "arn:aws:s3:::elasticbeanstalk-ap-northeast-2-123456789012"
+PREFIXES = [f"resources/environments/{ENV_ID}/*", *[f"resources/environments/logs/{kind}/{ENV_ID}/*" for kind in ("tail", "bundle", "publish", "deployments")]]
+OWN = [BUCKET + "/" + prefix for prefix in PREFIXES]
 
 
 class AWS:
@@ -36,6 +38,7 @@ class AWS:
         self.fail_scope = False
         self.broad = False
         self.wrong_owner = False
+        self.missing_deny = False
 
     def __call__(self, *args):
         self.calls.append(args)
@@ -55,7 +58,18 @@ class AWS:
         if args[:2] == ("iam", "list-attached-role-policies"):
             return {"AttachedPolicies": [{"PolicyName": "AWSElasticBeanstalkWebTier"}] if self.broad else []}
         if args[:2] == ("iam", "get-role-policy"):
-            return {"PolicyDocument": {"Statement": [{"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": OWN}]}}
+            if args[-1] == "runway-app":
+                return {"PolicyDocument": {"Statement": [{"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": OWN[0]}]}}
+            statements = []
+            if not self.missing_deny:
+                condition = {"StringEquals": {"s3:ResourceAccount": "123456789012"}}
+                statements += [
+                    {"Sid": "DenyOtherEnvironmentObjects", "Effect": "Deny", "Action": ["s3:GetObject*"], "NotResource": OWN, "Condition": condition},
+                    {"Sid": "DenyArtifactWrites", "Effect": "Deny", "Action": ["s3:PutObject*", "s3:DeleteObject*"], "NotResource": OWN[1:], "Condition": condition},
+                    {"Sid": "DenyOtherEnvironmentListing", "Effect": "Deny", "Action": ["s3:ListBucket", "s3:ListBucketVersions"], "Resource": BUCKET,
+                     "Condition": {"StringNotLike": {"s3:prefix": PREFIXES}}},
+                ]
+            return {"PolicyDocument": {"Statement": statements}}
         if args[:2] == ("s3", "cp"):
             return {}
         raise AssertionError(args)
@@ -93,7 +107,7 @@ class Isolation(unittest.TestCase):
         self.assertFalse(any(value.startswith("VersionKey=") for value in updates[0]))
 
     def test_scope_failure_or_broad_policy_never_publishes_user_bundle(self):
-        for setting in ("fail_scope", "broad", "wrong_owner"):
+        for setting in ("fail_scope", "broad", "wrong_owner", "missing_deny"):
             fake = AWS(existing=True)
             setattr(fake, setting, True)
             with self.assertRaises((RuntimeError, ValueError)):

@@ -82,10 +82,30 @@ def deploy(parameters, region, bundle, bootstrap_bundle, call=aws, pause=time.sl
         raise RuntimeError("The instance role still has managed policies; user code was not deployed")
     policy = call("iam", "get-role-policy", "--role-name", role, "--policy-name", "runway-app")["PolicyDocument"]
     arn = environments[0]["EnvironmentArn"].split(":")
-    expected = f"arn:{arn[1]}:s3:::elasticbeanstalk-{region}-{arn[4]}/resources/environments/{environment_id}/*"
-    reads = [statement for statement in policy["Statement"] if "s3:GetObject" in statement.get("Action", [])]
-    if len(reads) != 1 or reads[0].get("Resource") != expected:
+    bucket_arn = f"arn:{arn[1]}:s3:::elasticbeanstalk-{region}-{arn[4]}"
+    prefixes = [f"resources/environments/{environment_id}/*", *[
+        f"resources/environments/logs/{kind}/{environment_id}/*" for kind in ("tail", "bundle", "publish", "deployments")]]
+    expected = {f"{bucket_arn}/{prefix}" for prefix in prefixes}
+    log_resources = {f"{bucket_arn}/{prefix}" for prefix in prefixes[1:]}
+    statements = policy["Statement"]
+    reads = [statement for statement in statements if statement.get("Effect") == "Allow" and "s3:GetObject" in statement.get("Action", [])]
+    if len(reads) != 1 or reads[0].get("Resource") != f"{bucket_arn}/{prefixes[0]}":
         raise RuntimeError("Instance artifact permission is not scoped to this environment")
+    boundary = call("iam", "get-role-policy", "--role-name", role, "--policy-name", "runway-environment-boundary")["PolicyDocument"]
+    denies = {statement.get("Sid"): statement for statement in boundary["Statement"] if statement.get("Effect") == "Deny"}
+    objects = denies.get("DenyOtherEnvironmentObjects", {})
+    listing = denies.get("DenyOtherEnvironmentListing", {})
+    writes = denies.get("DenyArtifactWrites", {})
+    if (set(objects.get("NotResource", [])) != expected
+            or set(objects.get("Action", [])) != {"s3:GetObject*"}
+            or set(writes.get("Action", [])) != {"s3:PutObject*", "s3:DeleteObject*"}
+            or set(writes.get("NotResource", [])) != log_resources
+            or writes.get("Condition") != {"StringEquals": {"s3:ResourceAccount": arn[4]}}
+            or objects.get("Condition") != {"StringEquals": {"s3:ResourceAccount": arn[4]}}
+            or listing.get("Resource") != bucket_arn
+            or set(listing.get("Action", [])) != {"s3:ListBucket", "s3:ListBucketVersions"}
+            or set(listing.get("Condition", {}).get("StringNotLike", {}).get("s3:prefix", [])) != set(prefixes)):
+        raise RuntimeError("Instance role does not override cross-environment bucket-policy grants")
     print(f"Deploying user code to {stack} after scoped-role verification", flush=True)
     call("s3", "cp", "--only-show-errors", bundle, f"s3://{bucket}/{parameters['VersionKey']}")
     update({**parameters, **scope, "Bootstrap": "false"})

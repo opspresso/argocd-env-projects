@@ -145,6 +145,9 @@ EB는 Java SE의 executable JAR 또는 Tomcat의 ROOT.war를 실행한다. Docke
 EB 기본 `AWSElasticBeanstalkWebTier` 정책은 다른 환경의 S3 번들도 읽을 수 있으므로 사용하지 않습니다.
 인스턴스 역할은 해당 EB 환경 ID의 S3 경로와 환경 이름의 CloudWatch 로그만 읽거나 쓸 수 있습니다.
 SSM은 해당 Project·환경 경로만 허용합니다.
+EB 버킷 정책이 역할에 직접 부여하는 권한도 있으므로, 다른 환경 객체 읽기·목록 조회에는 명시적 거부를 둡니다.
+앱은 자신의 로그 경로에만 쓸 수 있으며, 배포 번들을 덮어쓸 수 없습니다.
+자기 환경의 tail·bundle·publish·deployments 로그 경로는 유지합니다.
 
 새 환경은 사용자 코드·설정·설치 스크립트·시크릿 참조가 없는 플랫폼 준비 앱으로 먼저 만듭니다.
 환경 ID를 조회한 뒤 별도의 CloudFormation 업데이트로 역할 범위를 제한합니다.

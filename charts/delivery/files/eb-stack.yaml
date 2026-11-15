@@ -158,6 +158,84 @@ Resources:
         - { Key: opspresso.com/delivery-project, Value: !Ref Project }
         - { Key: opspresso.com/delivery-env, Value: !Ref Environment }
 
+  # The EB bucket policy grants roles directly. This explicit boundary wins over those grants.
+  # Keep it until the environment has stopped, so termination never reopens cross-environment access.
+  EnvironmentBoundary:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: runway-environment-boundary
+      Roles: [!Ref InstanceRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: [s3:GetObject, s3:GetObjectVersion, s3:GetObjectAcl, s3:PutObject]
+            Resource: !If
+              - HasEnvironmentId
+              -
+                - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/tail/${EbEnvironmentId}/*
+                - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/bundle/${EbEnvironmentId}/*
+                - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/publish/${EbEnvironmentId}/*
+                - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/deployments/${EbEnvironmentId}/*
+              - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/*
+          - Effect: Allow
+            Action: [s3:ListBucket]
+            Resource: !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}
+            Condition:
+              StringLike:
+                s3:prefix: !If
+                  - HasEnvironmentId
+                  -
+                    - !Sub resources/environments/logs/tail/${EbEnvironmentId}/*
+                    - !Sub resources/environments/logs/bundle/${EbEnvironmentId}/*
+                    - !Sub resources/environments/logs/publish/${EbEnvironmentId}/*
+                    - !Sub resources/environments/logs/deployments/${EbEnvironmentId}/*
+                  - resources/environments/logs/*
+          - Sid: DenyOtherEnvironmentObjects
+            Effect: Deny
+            Action: ["s3:GetObject*"]
+            NotResource: !If
+              - HasEnvironmentId
+              -
+                - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/${EbEnvironmentId}/*
+                - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/tail/${EbEnvironmentId}/*
+                - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/bundle/${EbEnvironmentId}/*
+                - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/publish/${EbEnvironmentId}/*
+                - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/deployments/${EbEnvironmentId}/*
+              - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/*
+            Condition:
+              StringEquals:
+                s3:ResourceAccount: !Ref AWS::AccountId
+          - Sid: DenyArtifactWrites
+            Effect: Deny
+            Action: ["s3:PutObject*", "s3:DeleteObject*"]
+            NotResource: !If
+              - HasEnvironmentId
+              -
+                - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/tail/${EbEnvironmentId}/*
+                - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/bundle/${EbEnvironmentId}/*
+                - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/publish/${EbEnvironmentId}/*
+                - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/deployments/${EbEnvironmentId}/*
+              - !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/resources/environments/logs/*
+            Condition:
+              StringEquals:
+                s3:ResourceAccount: !Ref AWS::AccountId
+          - Sid: DenyOtherEnvironmentListing
+            Effect: Deny
+            Action: [s3:ListBucket, s3:ListBucketVersions]
+            Resource: !Sub arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}
+            Condition:
+              StringNotLike:
+                s3:prefix: !If
+                  - HasEnvironmentId
+                  -
+                    - !Sub resources/environments/${EbEnvironmentId}/*
+                    - !Sub resources/environments/logs/tail/${EbEnvironmentId}/*
+                    - !Sub resources/environments/logs/bundle/${EbEnvironmentId}/*
+                    - !Sub resources/environments/logs/publish/${EbEnvironmentId}/*
+                    - !Sub resources/environments/logs/deployments/${EbEnvironmentId}/*
+                  - "*"
+
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -181,6 +259,7 @@ Resources:
 
   # Elastic Beanstalk names the environment (its name has a 40-character limit that <project>-<environment> exceeds).
   AppEnvironment:
+    DependsOn: EnvironmentBoundary
     Type: AWS::ElasticBeanstalk::Environment
     Properties:
       ApplicationName: !Ref Application
