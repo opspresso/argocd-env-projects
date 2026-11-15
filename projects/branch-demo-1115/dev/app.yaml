@@ -1,0 +1,58 @@
+# Written by the app-deploy workflow for Deployment ad50be2e-0bd7-4ac5-89fd-0f4e2d965d73. Do not edit.
+deployment: ad50be2e-0bd7-4ac5-89fd-0f4e2d965d73
+app:
+  controller:
+    enabled: true
+  image:
+    reference: 396608815058.dkr.ecr.ap-northeast-2.amazonaws.com/projects/branch-demo-1115@sha256:9c9bbf075cdee3835336aac1a2c873f60c5cb2a514a1c2e6e38b6470a54ad58a
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    hosts:
+      - branch-demo-1115-dev.apps.rovr.dev
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: ad50be2e-0bd7-4ac5-89fd-0f4e2d965d73
+  configmap:
+    enabled: true
+    data:
+      APP_ENV: dev
+  podAnnotations:
+    opspresso.com/deployment: ad50be2e-0bd7-4ac5-89fd-0f4e2d965d73
+  nodeSelector:
+    kubernetes.io/arch: arm64
