@@ -21,7 +21,7 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
 - `charts/app` wraps the opspresso `app` chart (helm-charts), like argocd-env-apps sample-node and the agent-* services.
   Keep it free of its own templates. Declare tenant objects with `app` chart settings (`namespace`, `externalSecrets`,
   `networkPolicy`, `resourceQuota`). The environment namespace is one of them, so Argo CD deletes it with the
-  Application; the ApplicationSet must not use `CreateNamespace`, whose namespaces Argo CD never deletes. Only the guard, which has no `app` chart setting, lives in `app.raw.parentTemplates`.
+  Application; the ApplicationSet must not use `CreateNamespace`, whose namespaces Argo CD never deletes. The guard lives in `app.raw.parentTemplates`. The fixed renderer adds a separate Nexus pull ExternalSecret through `app.raw.resources`: the app chart has only one envFrom ExternalSecret and no dockerconfigjson target template.
 - The ApplicationSet creates one Application per `projects/<slug>/<env>` directory. It sets
   `app.tenant.*` (project, environment, domain, cluster, region, tenantSecretsRoleArn) and the project
   and environment labels of `app.namespace` as Helm parameters from the directory path and the cluster. Agent Runway
@@ -52,7 +52,7 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   pass through Helm; cluster values reach the steps through ConfigMap `delivery-settings`, and the shared scripts
   (`render.jq`, `check-resources.sh`, `commit.sh`) through ConfigMap `delivery-scripts`.
 - Keep the WorkflowTemplate names, parameters, results and DAG task names of the Workflow contract in
-  `docs/DELIVERY_V2.md` (`app-build-v2`: `checkout`, `check-application`, `test`, `registry`, `build`; `app-deploy`:
+  `docs/DELIVERY_V2.md` (`app-build-v2`: `checkout`, `check-application`, `test`, `build`, `build-artifact`, `publish-image`, `publish-artifact`; `app-deploy`:
   `deploy`, `verify`; `app-remove`: `remove`, `verify`; `resource-sync`: `write`). Agent Runway submits them and maps failed tasks to its steps.
 - `resource-sync` holds the mutex `resources-<project>-<environment>`; `app-deploy` and `app-remove` share
   `deploy-<project>-<environment>`. Argo Workflows v4 accepts only `synchronization.mutexes`.
@@ -60,13 +60,12 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   `resourceCharts` (charts/delivery values) in the environment's namespace. A ChartRelease may set only
   `passwordSecret`, `persistence`, `maxMemoryMiB` and `peer`. AppProject `projects` must allow the same kinds and the
   kinds those charts render.
-- Steps that run app code (`test`, `build`) get no Git credential, AWS identity or Kubernetes permission.
+- Steps that run app code (`test`, `build`, `build-artifact`) get no Git credential, AWS identity, Kubernetes token or Nexus credential. Only publisher steps receive the publish credential and mount source read-only.
 - `app-deploy-eb` and `app-remove-eb` deploy to and remove from an `aws-eb` Target (agent-platform `docs/DELIVERY_V3.md` D2).
   They keep the parameters, results and DAG task names of `app-deploy` and `app-remove` and add `target`. Only their
   steps run as `delivery-target`, which may assume only the Target deploy role `agent-runway-target-deploy`
   (`target.sh` checks it). The stack (`eb-stack.yaml`) and the source bundle (`eb-bundle.py`) take every value from
-  Agent Runway and the Target. Secret values never enter the bundle, the stack or the Workflow: the instance reads them
-  from its environment's SSM path when the app starts.
+  Agent Runway and the Target. Secret values never enter the bundle, the stack or the Workflow: Elastic Beanstalk resolves their SSM ARN references through the instance role when the app starts.
 - The VM Target steps read the instance type and counts only from `application.environment` (`instanceType`,
   `replicas`, `maxReplicas`); Agent Runway resolves the Project's size into them (agent-platform `docs/DELIVERY_V4.md`
   D3). The optional `application.environment.rollout` chooses the Elastic Beanstalk deployment policy: `immutable`
@@ -78,3 +77,5 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
 
 Run `./scripts/test.sh` after every chart change (Helm 4, `jq`, `yq`, Python with `pyyaml`). Review the rendered diff of both charts.
 Write docs in Korean and this file in English, following ISO 24495-1 and ASD-STE100.
+
+Native EB deploys JAR/WAR from Nexus and verifies its recorded SHA-256 and size. Its bundle contains no Docker runtime or registry credential. The selected solution stack must match the native format and Java/Tomcat version.

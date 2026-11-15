@@ -9,6 +9,7 @@ pass() { printf 'ok   %s\n' "$1"; }
 fail() { printf 'FAIL %s\n' "$1"; failures=$((failures + 1)); }
 
 helm dependency build charts/app >/dev/null
+python3 scripts/test_native_artifacts.py
 # A workload values file without a host.
 hostless=$(mktemp); trap 'rm -f "$hostless"' EXIT
 
@@ -30,7 +31,7 @@ fails() { local name=$1 pattern=$2; shift 2; local out; if out=$("$@" 2>&1); the
 # The deploy step renders the values with charts/delivery/files/render.jq; the fixtures must be its output.
 render() {
   jq -n --argjson application "$1" --arg deployment 11111111-1111-4111-8111-111111111111 --arg host "$3" \
-    --arg image "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo@sha256:$2" -f charts/delivery/files/render.jq | yq -p json -o yaml
+    --arg image "nexus.example/runway-images/todo@sha256:$2" -f charts/delivery/files/render.jq | yq -p json -o yaml
 }
 DEV_APP='{"runtime":{"port":8080,"health":"/health","build":{"context":".","dockerfile":"Dockerfile"}},"environment":{"replicas":1,"maxReplicas":1,"cpu":"100m","memory":"256Mi","architecture":"arm64","resources":[],"secrets":[],"env":{"LOG_LEVEL":"debug"}},"config":{"PGHOST":"db.app-todo-dev.svc.cluster.local","PGPORT":"5432"}}'
 PROD_APP='{"runtime":{"port":3000,"health":"/healthz","build":{"context":".","dockerfile":"Dockerfile"},"command":["node"],"args":["server.js"]},"environment":{"replicas":2,"maxReplicas":4,"cpu":"250m","memory":"512Mi","architecture":"amd64","resources":[],"secrets":[],"env":{}}}'
@@ -51,7 +52,7 @@ expect "dependency readiness and process liveness use separate paths" '^/ready,/
 legacy_paths=$(yq -r 'select(.kind == "Deployment") | .spec.template.spec.containers[0] | [.startupProbe.httpGet.path, .readinessProbe.httpGet.path, .livenessProbe.httpGet.path] | join(",")' <<<"$dev")
 expect "declarations without liveness keep the shared health path" '^/health,/health,/health$' "$legacy_paths"
 expect "the host is the one app.yaml carries" '"todo-dev.apps.rovr.dev"' "$dev"
-expect "image is pinned by digest" 'projects/todo@sha256:a{64}' "$dev"
+expect "image is pinned by digest" 'runway-images/todo@sha256:a{64}' "$dev"
 expect "PORT follows runtime.port" 'value: "8080"' "$dev"
 expect "plain env is set" 'name: LOG_LEVEL' "$dev"
 expect "secret Variables come from app-env" 'name: "?app-env"?$' "$dev"
@@ -144,7 +145,7 @@ for values in projects/*/*/app.yaml; do
 done
 
 delivery=$(helm template delivery charts/delivery --namespace app-delivery \
-  --set registry=123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects --set pushRoleArn=arn:aws:iam::123456789012:role/app-delivery-push \
+  --set registry=nexus.example/runway-images --set artifactRepository=https://nexus.example/repository/runway-artifacts \
   --set 'apiServer.cidrs={172.20.0.1/32,10.10.114.40/32}')
 for name in app-build-v2 app-deploy app-remove app-deploy-eb app-remove-eb resource-sync env-cleanup; do
   expect "delivery renders WorkflowTemplate $name" "^  name: ${name}$" "$delivery"
@@ -175,7 +176,7 @@ expect "the runner executor has its token Secret" 'name: delivery-runner.service
 expect "runner Pods reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$delivery"
 expect "runner Pods reach the API server on 443" 'cidr: 172.20.0.1/32' "$delivery"
 fails "the API server address is required" "apiServer.cidrs is required" \
-  helm template delivery charts/delivery --namespace app-delivery --set registry=x/projects --set pushRoleArn=arn:aws:iam::1:role/p
+  helm template delivery charts/delivery --namespace app-delivery --set registry=x/projects --set artifactRepository=https://nexus.example/repository/runway-artifacts
 expect "Argo parameters reach the WorkflowTemplates" '\{\{workflow\.parameters\.project\}\}' "$delivery"
 expect "resource-sync accepts the platform kro kinds" 'RESOURCE_KINDS: "RdsPostgres S3Bucket DynamoTable"' "$delivery"
 expect "resource-sync accepts the resource charts" 'RESOURCE_CHARTS: "postgres valkey"' "$delivery"
@@ -184,16 +185,16 @@ expect "Agent Runway reads every platform kro kind" 'resources: \[rdspostgres, s
 contract=$(python3 scripts/workflow_contract.py)
 line() { grep -E "^$1 $2( |$)" <<<"$contract" | cut -d' ' -f3-; }
 build_yaml=$(cat charts/delivery/files/app-build-v2.yaml)
-expect "app-build-v2 keeps the step names Agent Runway maps" '^checkout check-application test registry build manifest result$' "$(line app-build-v2 tasks)"
+expect "app-build-v2 keeps the step names Agent Runway maps" '^checkout check-application test build build-artifact publish-image publish-artifact$' "$(line app-build-v2 tasks)"
 expect "app-build-v2 takes the source archive and its commit" '^release project source revision applicationSha256 runtime platforms pipeline$' "$(line app-build-v2 parameters)"
-expect "app-build-v2 returns revision and image" '^image revision$' "$(line app-build-v2 outputs)"
+expect "app-build-v2 returns revision and its artifact identity" '^artifact image revision$' "$(line app-build-v2 outputs)"
 expect "builds from an archive are not serialized" '^$' "$(line app-build-v2 mutexes)"
 expect "the archive checkout has its ServiceAccount" '^delivery-source$' "$(yq 'select(.kind == "ServiceAccount" and .metadata.name == "delivery-source") | .metadata.name' <<<"$delivery")"
 expect "the archive checkout reports its result to Argo" 'delivery-source' "$(yq 'select(.kind == "RoleBinding" and .roleRef.name == "delivery-executor") | .subjects[].name' <<<"$delivery")"
-expect "each pipeline builds its own image of a commit" 'base="\$\{PIPELINE\}-\$\{REVISION\}"' "$build_yaml"
+expect "each pipeline and Release has an immutable image tag" 'image=.*PIPELINE.*RELEASE' "$build_yaml"
 expect "app-build-v2 builds arm64 alone by default" "value: '\\[\"linux/arm64\"\\]'" "$build_yaml"
-expect "each platform builds on a node of its architecture" 'kubernetes.io/arch: "\{\{inputs.parameters.arch\}\}"' "$build_yaml"
-expect "steps run one at a time on the ReadWriteOnce work volume" '^      parallelism: 1$' "$build_yaml"
+expect "each platform builds on a node of its architecture" 'inputs.parameters.arch' "$(yq ' .spec.templates[] | select(.name == "build" or .name == "build-artifact") | .nodeSelector."kubernetes.io/arch"' charts/delivery/files/app-build-v2.yaml)"
+expect "steps run one at a time on the ReadWriteOnce work volume" '^1$' "$(yq '.spec.templates[] | select(.name == "release") | .parallelism' charts/delivery/files/app-build-v2.yaml)"
 refuse "no platform is emulated" 'qemu|binfmt' "$build_yaml"
 expect "app-deploy keeps the step names Agent Runway maps" '^deploy verify$' "$(line app-deploy tasks)"
 expect "app-deploy takes Agent Runway's parameters" '^deployment project environment image application host$' "$(line app-deploy parameters)"
@@ -211,7 +212,7 @@ expect "one deployment runs per environment" '^deploy-\{\{workflow\.parameters\.
 expect "only deploy, remove, write and prune hold the deploy key, as delivery-git" '^app-deploy:deploy:delivery-git app-remove:remove:delivery-git resource-sync:write:delivery-git env-cleanup:prune:delivery-git$' "$(line all deploy-key)"
 expect "a changed declaration exits 3 for Agent Runway" 'exit 3' "$build_yaml"
 expect "app-deploy-eb keeps app-deploy's step names" '^deploy verify$' "$(line app-deploy-eb tasks)"
-expect "app-deploy-eb takes app-deploy's parameters and the Target" '^deployment project environment image application host target$' "$(line app-deploy-eb parameters)"
+expect "app-deploy-eb takes the native artifact and Target" '^deployment project environment artifact application host target$' "$(line app-deploy-eb parameters)"
 expect "app-deploy-eb returns url" '^url$' "$(line app-deploy-eb outputs)"
 expect "app-remove-eb keeps app-remove's step names" '^remove verify$' "$(line app-remove-eb tasks)"
 expect "app-remove-eb takes app-remove's parameters and the Target" '^deployment project environment target$' "$(line app-remove-eb parameters)"
@@ -219,7 +220,7 @@ for name in app-deploy-eb app-remove-eb; do
   expect "$name shares the environment mutex" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line $name mutexes)"
 done
 expect "VM Target steps act as delivery-target" '^app-deploy-eb:deploy app-deploy-eb:verify app-remove-eb:remove app-remove-eb:verify$' "$(line all delivery-target)"
-expect "app-deploy-eb refuses an image of another Project" 'is not an image of \$\{REGISTRY\}/\$\{PROJECT\} pinned by digest' "$(cat charts/delivery/files/app-deploy-eb.yaml)"
+expect "app-deploy-eb verifies the native artifact before bundling" 'artifacts.py download' "$(cat charts/delivery/files/app-deploy-eb.yaml)"
 if command -v cfn-lint >/dev/null; then
   if cfn-lint charts/delivery/files/eb-stack.yaml; then pass "cfn-lint accepts the aws-eb stack"; else fail "cfn-lint accepts the aws-eb stack"; fi
 else
@@ -282,33 +283,7 @@ $(printf '#%.0s' $(seq 16374))")"
 fails "install_script refuses a value that is not a string" "must be a string" installed "${target_json/\"region\"/\"installScript\":[1],\"region\"}"
 rm -rf "$script_dir"
 
-# eb-bundle.py: the bundle pins the image, keeps `$` literal and holds no secret value.
-bundle_dir=$(mktemp -d)
-printf '%s' '{"runtime":{"port":8080,"args":["--x=$HOME"]},"environment":{"env":{"LOG_LEVEL":"debug"}},"config":{"GREETING":"a $b"}}' > "$bundle_dir/app.json"
-eb_image="123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/projects/todo@sha256:$(printf 'a%.0s' $(seq 64))"
-python3 -I charts/delivery/files/eb-bundle.py "$bundle_dir/app.json" "$eb_image" /agent-runway/prod-eb/todo/prod ap-northeast-2 "$bundle_dir/b.zip"
-compose=$(unzip -p "$bundle_dir/b.zip" docker-compose.yml)
-expect "the bundle runs the Release image by digest" "image: \"${eb_image}\"" "$compose"
-expect "the bundle maps port 80 to runtime.port" 'ports: \["80:8080"\]' "$compose"
-expect "the bundle keeps \$ literal for Compose" 'GREETING: "a \$\$b"' "$compose"
-expect "the hook reads only the environment's SSM path" '--path /agent-runway/prod-eb/todo/prod ' "$(unzip -p "$bundle_dir/b.zip" .platform/hooks/prebuild/01-runway.sh)"
-expect "the hook is executable" '-rwx' "$(unzip -Z "$bundle_dir/b.zip" .platform/hooks/prebuild/01-runway.sh)"
-fails "the bundle refuses an image outside ECR" "pinned by digest" \
-  python3 -I charts/delivery/files/eb-bundle.py "$bundle_dir/app.json" docker.io/library/nginx:latest /agent-runway/prod-eb/todo/prod ap-northeast-2 "$bundle_dir/c.zip"
-refuse "a bundle without an install script has no install hook" '00-install\.sh' "$(unzip -Z1 "$bundle_dir/b.zip")"
-: > "$bundle_dir/empty.sh"
-python3 -I charts/delivery/files/eb-bundle.py "$bundle_dir/app.json" "$eb_image" /agent-runway/prod-eb/todo/prod ap-northeast-2 "$bundle_dir/e.zip" "$bundle_dir/empty.sh"
-refuse "an empty install script adds no install hook" '00-install\.sh' "$(unzip -Z1 "$bundle_dir/e.zip")"
-printf '#!/bin/bash\ndnf -y install htop\n' > "$bundle_dir/install.sh"
-python3 -I charts/delivery/files/eb-bundle.py "$bundle_dir/app.json" "$eb_image" /agent-runway/prod-eb/todo/prod ap-northeast-2 "$bundle_dir/i.zip" "$bundle_dir/install.sh"
-for kind in hooks confighooks; do
-  if unzip -p "$bundle_dir/i.zip" ".platform/${kind}/prebuild/00-install.sh" | cmp -s - "$bundle_dir/install.sh"; then
-    pass "the ${kind} install hook is the Target's script unchanged"; else fail "the ${kind} install hook is the Target's script unchanged"; fi
-  expect "the ${kind} install hook is executable" '^-rwxr-xr-x' "$(unzip -Z "$bundle_dir/i.zip" ".platform/${kind}/prebuild/00-install.sh")"
-done
-expect "the install hook runs before the Variable hook" '^\.platform/hooks/prebuild/00-install\.sh \.platform/hooks/prebuild/01-runway\.sh$' \
-  "$(unzip -Z1 "$bundle_dir/i.zip" | grep '^\.platform/hooks/' | LC_ALL=C sort | paste -sd ' ' -)"
-rm -rf "$bundle_dir"
+# Native bundle, secret references and output integrity are covered by test_native_artifacts.py.
 
 expect "deploy refuses an image of another Project" 'is not an image of \$\{REGISTRY\}/\$\{PROJECT\} pinned by digest' "$(cat charts/delivery/files/app-deploy.yaml)"
 

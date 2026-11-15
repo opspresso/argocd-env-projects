@@ -84,11 +84,16 @@ print("all delivery-target", " ".join(target_steps))
 
 # No step of the build holds a Git credential or runs git: checkout unpacks the archive Agent Runway uploaded.
 build = {t["name"]: t for t in load("app-build-v2")["spec"]["templates"]}
-for task in ("test", "build", "check-application"):
+for task in ("test", "build", "build-artifact", "check-application"):
     assert build[task]["executor"]["serviceAccountName"] == "delivery-runner", task
+    assert "secretKeyRef" not in yaml.safe_dump(build[task]) and "secretRef" not in yaml.safe_dump(build[task]), task
 checkout = build["checkout"]
 assert checkout["serviceAccountName"] == "delivery-source", "checkout reads the archive as delivery-source"
-assert [n for n, t in build.items() if "secretKeyRef" in yaml.safe_dump(t.get("container", {}))] == [], "no build step reads a Secret through its environment"
+assert [n for n, t in build.items() if "secretKeyRef" in yaml.safe_dump(t.get("container", {}))] == ["publish-image", "publish-artifact"], "only trusted publishers receive Nexus credentials"
+for task in ("publish-image", "publish-artifact"):
+    mounts = build[task]["container"]["volumeMounts"]
+    assert next(m for m in mounts if m["name"] == "work").get("readOnly") is True, "publisher credentials and outputs must not enter the source volume"
+assert "--no-push" in build["build"]["container"]["args"][0], "Dockerfile code must not have push credentials"
 assert "volumes" not in checkout, "checkout mounts no Secret or key"
 script = checkout["container"]["args"][0]
 assert "git " not in script and "ssh " not in script, "checkout does not reach a Git host"
