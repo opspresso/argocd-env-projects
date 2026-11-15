@@ -169,6 +169,7 @@ spec:
         command: [sh, -euc]
         args:
           - |
+            . /etc/delivery-scripts/http-health.sh
             . /etc/delivery-scripts/target.sh
             require region deployRole
             stack="runway-${PROJECT}-${ENVIRONMENT}"
@@ -198,7 +199,7 @@ spec:
             url="https://${HOST}"
             echo "Environment $environment runs Deployment ${DEPLOYMENT}. Checking ${url}${health}"
             deadline=$(( $(date +%s) + 300 ))
-            until curl -fsS -o /dev/null --max-time 10 "${url}${health}"; do
+            until http_healthy "${url}${health}"; do
               if [ "$(date +%s)" -ge "$deadline" ]; then echo "${url}${health} did not answer with 2xx in 5 minutes"; exit 1; fi
               sleep 5
             done

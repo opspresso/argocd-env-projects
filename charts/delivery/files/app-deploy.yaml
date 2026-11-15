@@ -141,6 +141,7 @@ spec:
         command: [sh, -euc]
         args:
           - |
+            . /etc/delivery-scripts/http-health.sh
             namespace="app-${PROJECT}-${ENVIRONMENT}"
             health=$(printf '%s' "$APPLICATION" | jq -r '.runtime.health // "/health"')
             digest="${IMAGE#*@}"
@@ -169,7 +170,7 @@ spec:
             url="https://${HOST}"
             echo "Rollout finished. Checking ${url}${health}"
             deadline=$(( $(date +%s) + 180 ))
-            until curl -fsS -o /dev/null --max-time 10 "${url}${health}"; do
+            until http_healthy "${url}${health}"; do
               if [ "$(date +%s)" -ge "$deadline" ]; then echo "${url}${health} did not answer with 2xx in 3 minutes"; exit 1; fi
               sleep 5
             done
@@ -185,9 +186,17 @@ spec:
           - {name: HOME, value: /tmp}
         securityContext: *unprivileged
         resources: *small
+        volumeMounts:
+          - name: scripts
+            mountPath: /etc/delivery-scripts
+            readOnly: true
       outputs:
         parameters:
           - name: url
             globalName: url
             valueFrom:
               path: /tmp/url
+      volumes:
+        - name: scripts
+          configMap:
+            name: delivery-scripts

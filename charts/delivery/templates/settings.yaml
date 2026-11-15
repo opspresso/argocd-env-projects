@@ -52,7 +52,7 @@ kind: ConfigMap
 metadata:
   name: delivery-scripts
 data:
-{{- range list "render.jq" "check-resources.sh" "commit.sh" "target.sh" "eb-bundle.py" "eb-stack.yaml" "artifacts.py" }}
+{{- range list "render.jq" "check-resources.sh" "commit.sh" "target.sh" "eb-bundle.py" "eb-stack.yaml" "artifacts.py" "http-health.sh" }}
   {{ . }}: |
 {{ $.Files.Get (printf "files/%s" .) | indent 4 }}
 {{- end }}
