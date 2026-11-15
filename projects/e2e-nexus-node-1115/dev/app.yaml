@@ -1,10 +1,10 @@
-# Written by the app-deploy workflow for Deployment 2843007e-905b-4768-896b-6e0edfa3beb0. Do not edit.
-deployment: 2843007e-905b-4768-896b-6e0edfa3beb0
+# Written by the app-deploy workflow for Deployment bb7408af-05f3-4ea3-be55-733452e703c9. Do not edit.
+deployment: bb7408af-05f3-4ea3-be55-733452e703c9
 app:
   controller:
     enabled: true
   image:
-    reference: nexus.demo.opsp.dev/runway-images/e2e-nexus-node-1115@sha256:f1c92a3c2abc4dec6f293b835fe94f72542f2cda0d12f2a641cdf9136154b372
+    reference: nexus.demo.opsp.dev/runway-images/e2e-nexus-node-1115@sha256:7345bc09409c58811904071e92065e862b661afeae52cbd2d57913e046a43527
   imagePullSecrets:
     - name: nexus-reader
   raw:
@@ -75,10 +75,10 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: 2843007e-905b-4768-896b-6e0edfa3beb0
+      force-sync: bb7408af-05f3-4ea3-be55-733452e703c9
   configmap:
     enabled: false
   podAnnotations:
-    opspresso.com/deployment: 2843007e-905b-4768-896b-6e0edfa3beb0
+    opspresso.com/deployment: bb7408af-05f3-4ea3-be55-733452e703c9
   nodeSelector:
     kubernetes.io/arch: arm64
