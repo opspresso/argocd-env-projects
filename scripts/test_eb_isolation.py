@@ -71,10 +71,14 @@ class Isolation(unittest.TestCase):
         updates = [call for call in fake.calls if call[:2] == ("cloudformation", "deploy")]
         self.assertEqual(len(updates), 3)
         self.assertIn("Bootstrap=true", updates[0])
-        self.assertIn("VersionKey=_bootstrap/fixture/dev/release.zip", updates[0])
+        self.assertIn("VersionKey=fixture/dev/_bootstrap/release.zip", updates[0])
         scoped = updates[1][updates[1].index("--parameter-overrides") + 1:]
         self.assertEqual(set(scoped), {f"EbEnvironmentId={ENV_ID}", f"EbEnvironmentName={ENV_NAME}"})
         self.assertIn("Bootstrap=false", updates[2])
+        # The target role grants S3 writes only below its Project/environment session-tag prefix.
+        for call in fake.calls:
+            if call[:2] == ("s3", "cp"):
+                self.assertTrue(call[-1].startswith("s3://private-source/fixture/dev/"))
         user_upload = next(c for c in fake.calls if "/user.zip" in c)
         policy_read = next(c for c in fake.calls if c[:2] == ("iam", "get-role-policy"))
         self.assertLess(fake.calls.index(policy_read), fake.calls.index(user_upload))
