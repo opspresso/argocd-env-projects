@@ -1,93 +1,71 @@
-"""Writes the Elastic Beanstalk source bundle of one Deployment (app-deploy-eb, agent-platform docs/DELIVERY_V3.md D2).
+"""Bundle a verified JAR or WAR for native Elastic Beanstalk execution.
 
-Usage: eb-bundle.py <application JSON file> <image> <secrets path> <region> <out.zip> [<install script file>]
-
-The bundle holds docker-compose.yml (the Release image pinned by digest, PORT, the non-secret Variables, command and
-args) and a prebuild hook that runs on every instance before the app starts: it logs in to the image's ECR registry and
-writes the environment's secret Variables from SSM into docker-compose.override.yml, so secret values never enter the
-bundle, the stack or the Workflow. A non-empty install script file (the Target's installScript, agent-platform
-docs/DELIVERY_V4.md D5) becomes the prebuild hook 00-install.sh, which runs before that hook; when it exits non-zero,
-the Elastic Beanstalk deployment fails. Every input comes from Agent Runway; nothing comes from the app repository.
+Usage: eb-bundle.py <application.json> <artifact file> <SSM path> <region> <account> <out.zip> [<install script>]
+Secret values remain in SSM. EB resolves their ARNs using the instance's scoped IAM role.
 """
 import json
 import re
 import sys
 import zipfile
+from pathlib import Path
 
-IMAGE = re.compile(r"^(\d{12})\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$")
 VARIABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SECRETS_PATH = re.compile(r"^/agent-runway/[a-z0-9-]+/[a-z0-9-]+/[a-z0-9]+$")
 
 
-def compose_value(value: str) -> str:
-    """A YAML double-quoted scalar (JSON is valid YAML) with `$` doubled, because Compose interpolates `$` in values."""
-    return json.dumps(value.replace("$", "$$"))
-
-
-def main(application_file: str, image: str, secrets_path: str, region: str, out: str, install_file: str = "") -> None:
-    with open(application_file) as file:
-        application = json.load(file)
-    match = IMAGE.match(image)
-    if not match:
-        sys.exit(f"image must be an ECR image pinned by digest: {image}")
-    if not SECRETS_PATH.match(secrets_path):
-        sys.exit(f"secrets path is not an Agent Runway environment path: {secrets_path}")
+def main(application_file, artifact_file, secrets_path, region, account, out, install_file=""):
+    application = json.loads(Path(application_file).read_text())
+    if not SECRETS_PATH.fullmatch(secrets_path) or not re.fullmatch(r"[a-z]{2}(?:-[a-z]+)+-[0-9]", region) or not re.fullmatch(r"[0-9]{12}", account):
+        raise ValueError("invalid environment secret scope")
     runtime = application["runtime"]
-    port = int(runtime["port"])
-    if not 1024 <= port <= 65535:
-        sys.exit(f"runtime.port is out of range: {port}")
-    environment = {"PORT": str(port), **application["environment"].get("env", {}), **application.get("config", {})}
-    for name in environment:
-        if not VARIABLE.match(name):
-            sys.exit(f"invalid variable name: {name}")
-
-    lines = ["services:", "  app:", f"    image: {json.dumps(image)}", "    restart: always",
-             f"    ports: [{json.dumps(f'80:{port}')}]", "    environment:"]
-    lines += [f"      {name}: {compose_value(value)}" for name, value in sorted(environment.items())]
-    if runtime.get("command"):
-        lines.append(f"    entrypoint: {json.dumps([value.replace('$', '$$') for value in runtime['command']])}")
-    if runtime.get("args"):
-        lines.append(f"    command: {json.dumps([value.replace('$', '$$') for value in runtime['args']])}")
-    compose = "\n".join(lines) + "\n"
-
-    registry = image.split("/", 1)[0]
-    # Runs as root on the instance with its instance profile, which reads only this environment's SSM path.
-    hook = f"""#!/bin/bash
-set -euo pipefail
-cd "$(dirname "$0")/../../.."
-aws ecr get-login-password --region {match.group(2)} | docker login --username AWS --password-stdin {registry}
-umask 077
-aws ssm get-parameters-by-path --region {region} --path {secrets_path} --with-decryption --output json \\
-  --query 'Parameters[].[Name,Value]' | python3 -c '
-import json, sys
-pairs = json.load(sys.stdin)
-print("services:")
-print("  app:")
-print("    environment:" + ("" if pairs else " {{}}"))
-for name, value in pairs:
-    print("      " + json.dumps(name.rsplit("/", 1)[1]) + ": " + json.dumps(value.replace("$", "$$")))
-' > docker-compose.override.yml
-"""
-    install = b""
-    if install_file:
-        with open(install_file, "rb") as file:  # the administrator's bytes, unchanged
-            install = file.read()
-    files = [("docker-compose.yml", compose, 0o100644)]
-    # Elastic Beanstalk runs the hooks of application deployments and of configuration deployments, in name order.
-    for kind in ("hooks", "confighooks"):
-        if install:
+    native = application["native"]
+    format_ = native["format"]
+    if format_ not in ("jar", "war"):
+        raise ValueError("native format must be jar or war")
+    port = runtime["port"]
+    if not isinstance(port, int) or not 1024 <= port <= 65535:
+        raise ValueError("invalid application port")
+    if format_ == "war" and (port != 8080 or runtime.get("command") or runtime.get("args")):
+        raise ValueError("Tomcat owns the WAR entrypoint and listens on port 8080")
+    environment = {**application["environment"].get("env", {}), **application.get("config", {}), "PORT": str(port)}
+    secrets = application["environment"].get("secrets", [])
+    if any(not VARIABLE.fullmatch(name) for name in [*environment, *secrets]):
+        raise ValueError("invalid variable name")
+    if set(environment).intersection(secrets):
+        raise ValueError("a secret also has a plaintext value")
+    options = [{"namespace": "aws:elasticbeanstalk:application:environment", "option_name": name, "value": str(value)}
+               for name, value in sorted(environment.items())]
+    options += [{"namespace": "aws:elasticbeanstalk:application:environmentsecrets", "option_name": name,
+                 "value": f"arn:aws:ssm:{region}:{account}:parameter{secrets_path}/{name}"} for name in sorted(secrets)]
+    if sum(len((item["option_name"] + item["value"]).encode()) for item in options) > 4096:
+        raise ValueError("Elastic Beanstalk environment properties exceed 4096 bytes")
+    files = [(".ebextensions/01-environment.config", json.dumps({"option_settings": options}), 0o100644)]
+    if format_ == "jar":
+        command = runtime.get("command") or ["java", "-jar", "application.jar"]
+        command = [*command, *runtime.get("args", [])]
+        if not command or not all(isinstance(arg, str) and "\x00" not in arg for arg in command):
+            raise ValueError("invalid process command")
+        files += [("Procfile", "web: python3 runway-launch.py\n", 0o100644),
+                  ("runway-command.json", json.dumps(command), 0o100644),
+                  ("runway-launch.py", "import json, os\nwith open('runway-command.json') as f: command = json.load(f)\nos.execvpe(command[0], command, os.environ)\n", 0o100644)]
+    install = Path(install_file).read_bytes() if install_file else b""
+    if install:
+        for kind in ("hooks", "confighooks"):
             files.append((f".platform/{kind}/prebuild/00-install.sh", install, 0o100755))
-        files.append((f".platform/{kind}/prebuild/01-runway.sh", hook, 0o100755))
-    with zipfile.ZipFile(out, "w") as bundle:
-        for name, text, mode in files:
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        bundle.write(artifact_file, "application.jar" if format_ == "jar" else "ROOT.war")
+        for name, data, mode in files:
             info = zipfile.ZipInfo(name)
-            info.create_system = 3  # Unix, so the mode bits apply
+            info.create_system = 3
             info.external_attr = mode << 16
             info.compress_type = zipfile.ZIP_DEFLATED
-            bundle.writestr(info, text)
+            bundle.writestr(info, data)
+
+    if Path(out).stat().st_size > 500_000_000:
+        raise ValueError("Elastic Beanstalk source bundle exceeds 500 MB")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (6, 7):
+    if len(sys.argv) not in (7, 8):
         sys.exit(__doc__)
     main(*sys.argv[1:])

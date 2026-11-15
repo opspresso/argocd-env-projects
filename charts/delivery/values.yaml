@@ -1,7 +1,9 @@
-# ECR prefix of the Project repositories: <account>.dkr.ecr.<region>.amazonaws.com/projects
+# Nexus Docker path-based repository, without a URL scheme.
 registry: ""
-# terraform-env-opsp demo/8-app-delivery: the role a build assumes to push to one Project repository.
-pushRoleArn: ""
+artifactRepository: ""
+nexus:
+  publisherPasswordKey: /k8s/common/nexus/runway-publisher-password
+  readerPasswordKey: /k8s/common/nexus/runway-reader-password
 region: ap-northeast-2
 gitops:
   repository: opspresso/argocd-env-projects

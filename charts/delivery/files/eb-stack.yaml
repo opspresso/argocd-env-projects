@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 # One Project environment on an aws-eb Target (agent-platform docs/DELIVERY_V3.md D2). The app-deploy-eb Workflow
 # creates or updates the stack runway-<project>-<environment> with the Release's source bundle; the app-remove-eb
 # Workflow deletes it. Every value comes from Agent Runway and the Target, never from the app repository.
-Description: Agent Runway app on Elastic Beanstalk (Docker)
+Description: Agent Runway app on Elastic Beanstalk (native Java)
 
 Parameters:
   Project:
@@ -16,7 +16,7 @@ Parameters:
     Description: The Agent Runway Deployment that last changed the stack; a new value deploys the version again.
   SolutionStackName:
     Type: String
-    Description: The Target's Elastic Beanstalk Docker platform, for example "64bit Amazon Linux 2023 v4.14.1 running Docker".
+    Description: The native Java SE or Tomcat solution stack selected from the Target platform catalogue.
   ServiceRoleArn:
     Type: String
     Description: The Elastic Beanstalk service role of the Target account.
@@ -65,15 +65,12 @@ Parameters:
   SecretsKeyArn:
     Type: String
     Description: The KMS key of the SecureString Variables.
-  RepositoryArn:
-    Type: String
-    Description: The ECR repository projects/<project> the instances pull the Release image from.
 
 Conditions:
   AllAtOnce: !Equals [!Ref Rollout, AllAtOnce]
 
 Resources:
-  # The instances read only this environment's Variables and pull only this Project's images.
+  # The instances read only this environment's Variables. They receive the app in the EB source bundle.
   # Named <stack>-app so the Target deploy role, which may change only roles and instance profiles named
   # runway-<project>-<environment>-*, can manage them; generated names cut long stack names.
   InstanceRole:
@@ -95,20 +92,14 @@ Resources:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
-                Action: [ssm:GetParametersByPath]
-                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPath}
+                Action: [ssm:GetParameter]
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPath}/*
               - Effect: Allow
                 Action: [kms:Decrypt]
                 Resource: !Ref SecretsKeyArn
                 Condition:
                   StringEquals:
                     kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
-              - Effect: Allow
-                Action: [ecr:GetAuthorizationToken]
-                Resource: "*"
-              - Effect: Allow
-                Action: [ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, ecr:BatchCheckLayerAvailability]
-                Resource: !Ref RepositoryArn
       Tags:
         - { Key: opspresso.com/delivery-project, Value: !Ref Project }
         - { Key: opspresso.com/delivery-env, Value: !Ref Environment }

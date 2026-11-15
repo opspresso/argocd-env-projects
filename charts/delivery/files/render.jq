@@ -19,6 +19,14 @@
       {
         controller: { enabled: true },
         image: { reference: $image },
+        imagePullSecrets: [{ name: "nexus-reader" }],
+        # A separate pull credential, never part of app-env. raw.resources preserves the ESO template literally.
+        raw: { resources: [{ apiVersion: "external-secrets.io/v1", kind: "ExternalSecret",
+          metadata: { name: "nexus-reader", annotations: { "argocd.argoproj.io/sync-wave": "-1" } },
+          spec: { refreshInterval: "1h", secretStoreRef: { kind: "SecretStore", name: "agent-runway" },
+            target: { name: "nexus-reader", template: { type: "kubernetes.io/dockerconfigjson", engineVersion: "v2",
+              data: { ".dockerconfigjson": ("{\"auths\":{" + ($image | split("/")[0] | tojson) + ":{\"auth\":\"{{ printf \"runway-reader:%s\" .password | b64enc }}\"}}}") } } },
+            data: [{ secretKey: "password", remoteRef: { key: "/k8s/common/nexus/runway-reader-password" } }] } }] },
         replicaCount: $e.replicas,
         autoscaling: (if $max > $e.replicas then
           { enabled: true, minReplicas: $e.replicas, maxReplicas: $max,

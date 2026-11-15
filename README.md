@@ -9,7 +9,7 @@ Agent Runway가 배포하는 앱의 GitOps 저장소입니다. Studio Agent가 A
 
 | 경로 | 내용 | 쓰는 주체 |
 | --- | --- | --- |
-| `charts/app/` | 앱 Environment 하나의 wrapper chart. [opspresso/helm-charts](https://github.com/opspresso/helm-charts)의 `app` chart(argocd-env-apps의 sample-node·agent-*와 같은 chart)의 설정으로 Namespace·Deployment·Service·HTTPRoute·HPA·PDB·SecretStore·ExternalSecret·NetworkPolicy·ResourceQuota를 만든다. Namespace `app-<slug>-<env>`는 이 Application의 객체이므로 Project나 Environment가 없어지면 Argo CD가 namespace와 그 안의 모든 객체를 지운다. `app.yaml`이 없으면 Deployment·Service·HTTPRoute 없이 tenant 객체만 만든다. `app.raw`에는 환경·namespace·namespace label·host·image digest를 검사하는 guard만 둔다 | 운영자(PR) |
+| `charts/app/` | 앱 Environment 하나의 wrapper chart. [opspresso/helm-charts](https://github.com/opspresso/helm-charts)의 `app` chart(argocd-env-apps의 sample-node·agent-*와 같은 chart)의 설정으로 Namespace·Deployment·Service·HTTPRoute·HPA·PDB·SecretStore·ExternalSecret·NetworkPolicy·ResourceQuota를 만든다. Namespace `app-<slug>-<env>`는 이 Application의 객체이므로 Project나 Environment가 없어지면 Argo CD가 namespace와 그 안의 모든 객체를 지운다. `app.yaml`이 없으면 Deployment·Service·HTTPRoute 없이 tenant 객체만 만든다. `app.raw`에는 환경 경계를 검사하는 guard와 kubelet 전용 Nexus pull ExternalSecret을 둔다 | 운영자(PR) |
 | `charts/delivery/` | namespace `app-delivery`의 Argo Workflows WorkflowTemplate `app-build-v2`·`app-deploy`·`app-remove`·`resource-sync`·`env-cleanup`, CronWorkflow `env-cleanup`, 단계별 ServiceAccount·RBAC, 설정 | 운영자(PR) |
 | `projects/<slug>/<env>/app.yaml` | Environment 하나의 `app` chart 값: 이미지 digest, 복제 수, port, env, 비밀이 아닌 Variable(ConfigMap), probe, 자원, 노드 architecture(`nodeSelector` `kubernetes.io/arch`, amd64는 NodePool taint `opspresso.com/arch=amd64:NoSchedule`의 toleration도). 시크릿 Variable은 SSM에서 ExternalSecret `app-env`로 받는다. `app-deploy`의 deploy 단계가 `charts/delivery/files/render.jq`로 Agent Runway의 선언에서 만든다 | `app-deploy` workflow가 쓰고 `app-remove` workflow가 지운다 |
 | `projects/<slug>/<env>/resources.yaml` | Environment 하나의 AWS 전용 리소스(kro 인스턴스 `RdsPostgres`·`S3Bucket`·`DynamoTable`). Agent Runway가 렌더링한 manifest를 `resource-sync`의 write 단계가 검사해 기록한다 | `resource-sync` workflow만 |
@@ -36,7 +36,7 @@ Agent Runway는 build 한 번의 결과를 Release로, Release를 한 환경에 
 flowchart LR
   agent["Studio Agent"] -- "MCP" --> delivery["Agent Runway"]
   delivery -- "build-&lt;Release&gt;" --> build["app-build-v2"]
-  build -- "checkout·test·build" --> ecr["ECR projects/&lt;slug&gt;"]
+  build -- "test·build·publish" --> ecr["Nexus image·JAR·WAR"]
   delivery -- "deploy-&lt;Deployment&gt;" --> deploy["app-deploy"]
   deploy -- "deploy: commit" --> repo["argocd-env-projects<br/>projects/&lt;slug&gt;/&lt;env&gt;/"]
   delivery -- "resources-&lt;Sync&gt;" --> sync["resource-sync"]
@@ -51,15 +51,15 @@ flowchart LR
 | `app-build-v2` | `checkout` | `delivery-source` | 그 commit의 소스 아카이브(`source`, S3)를 풀고 commit SHA(`revision`)를 기록한다. Agent Runway가 한 사용자의 Git 권한으로 저장소를 읽어 올린 것이며, 이 단계와 클러스터는 Git 자격 증명을 갖지 않는다. 소스에는 `.git`이 없다 |
 | `app-build-v2` | `check-application` | `delivery-runner` | `application.yaml`이 Agent Runway에 적용한 파일과 같은지 SHA-256으로 확인한다. 다르면 exit code 3이다 |
 | `app-build-v2` | `test` | `delivery-runner` | `runtime.test.image`에서 `runtime.test.command`를 실행한다. 없으면 건너뛴다 |
-| `app-build-v2` | `registry` | `delivery-registry` | ECR repository를 만들고, 같은 Release tag(arm64만이면 `<pipeline>-<commit>`, 그 밖에는 `<pipeline>-<commit>-<arch>-<arch>`)의 이미지가 있으면 재사용한다. 없으면 그 Project에만 push할 수 있는 credential을 만들고 build할 platform을 정한다. `<pipeline>`은 Release가 속한 Agent Runway 파이프라인(parameter `pipeline`)이므로, 다른 파이프라인은 같은 commit도 다시 빌드한다. `pipeline`이 비어 있으면 tag는 `<commit>`으로 시작한다 |
-| `app-build-v2` | `build` | `delivery-runner` | parameter `platforms`(기본 `["linux/arm64"]`)의 platform마다 그 architecture 노드에서 kaniko로 빌드해 push한다. 에뮬레이션(QEMU)은 쓰지 않는다. amd64 노드는 taint가 있는 NodePool `delivery-amd64`(`terraform-env-demo` `demo/6-eks-node`)에서 뜬다. user namespace·privileged가 필요 없다 |
-| `app-build-v2` | `manifest` | `delivery-runner` | platform이 둘 이상이면 platform별 이미지(`<pipeline>-<commit>-build-<arch>`)를 manifest list 하나로 묶어 Release tag로 push한다. Release `image`는 그 list의 digest다 |
+| `app-build-v2` | `build` | `delivery-runner` | 요청한 architecture의 노드에서 kaniko `--no-push`로 컨테이너 tar를 만든다. 게시 자격 증명과 AWS identity가 없다 |
+| `app-build-v2` | `build-artifact` | `delivery-runner` | 선언한 builder image와 command로 JAR/WAR를 만든다. 게시 자격 증명이 없다 |
+| `app-build-v2` | `publish-image`·`publish-artifact` | `delivery-runner` | 소스 volume을 읽기 전용으로 연결한다. 별도 Nexus 게시 계정으로 산출물을 올리고 digest 또는 SHA-256·크기를 검증한다 |
 | `app-deploy` | `deploy` | `delivery-git` | 이미지가 그 Project의 digest 고정 이미지인지 확인하고 `projects/<slug>/<env>/app.yaml`에 기록한다. 이 저장소에만 쓰기 권한이 있는 deploy key(SSM `/k8s/common/app-delivery/gitops-deploy-key`)로 push한다 |
 | `app-deploy` | `verify` | `delivery-verify` | rollout 완료와 `https://<host><health>`의 2xx 응답을 기다린다 |
 | `app-remove` | `remove` | `delivery-git` | `projects/<slug>/<env>/app.yaml`을 지운다. 리소스는 그대로 둔다 |
 | `app-remove` | `verify` | `delivery-verify` | Argo CD가 namespace의 Deployment `app`을 지울 때까지 기다린다 |
 | `app-remove` | `cleanup` | `delivery-verify`·`delivery-git` | `env-cleanup`의 `check-and-prune`. 아래 `env-cleanup`의 `live`·`prune`과 같다. 이 Workflow가 이미 잡은 mutex 안에서 실행한다 |
-| `app-deploy-eb` | `deploy` | `delivery-target` | `aws-eb` Target의 deploy role을 넘겨받는다. source bundle(`eb-bundle.py`: digest 고정 이미지의 `docker-compose.yml`과, 시작할 때 그 환경의 SSM 경로에서 비밀 값을 읽는 hook `01-runway.sh`)을 Target bucket에 올리고 stack `runway-<slug>-<env>`(`eb-stack.yaml`)를 만들거나 갱신한다. Target에 `installScript`가 있으면 bundle의 prebuild hook `00-install.sh`가 되어 `01-runway.sh`보다 먼저 실행된다. 스크립트가 0이 아닌 값으로 끝나면 배포가 실패한다. 실패하면 CloudFormation이 되돌린다. 처음 만들기가 실패해 `ROLLBACK_COMPLETE`로 남은 stack은 갱신할 수 없으므로 지우고 다시 만든다. 교체 방식은 `environment.rollout`이 정한다 |
+| `app-deploy-eb` | `deploy` | `delivery-target` | Nexus 파일을 읽기 계정으로 내려받아 기록한 SHA-256·크기를 확인한다. JAR/ROOT.war와 EB 환경 secret의 SSM ARN 참조를 bundle에 넣고 target 계정의 stack을 배포한다. 설치 스크립트는 prebuild hook으로 실행하며 실패하면 배포가 실패한다 |
 | `app-deploy-eb` | `verify` | `delivery-target` | Elastic Beanstalk 환경이 이 Deployment의 version을 `Ok` health로 실행하고 `https://<host><health>`가 2xx를 반환할 때까지 기다린다 |
 | `app-remove-eb` | `remove`·`verify` | `delivery-target` | stack `runway-<slug>-<env>`를 지우고 없어졌는지 확인한다. 리소스와 Variable은 남긴다 |
 | `resource-sync` | `write` | `delivery-git` | manifest가 허용한 kro 인스턴스 종류(`resourceKinds`) 또는 chart(`resourceCharts`)이고 그 환경 namespace에 속하는지, 이름이 `^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$`이고 고유한지 확인하고 `projects/<slug>/<env>/resources.yaml`과 `resources/<name>.yaml`을 통째로 바꾼다. 리소스를 모두 지우려면 `{apiVersion: v1, kind: List, items: []}` 문서를 보낸다. 빈 manifest는 거부한다 |
@@ -75,7 +75,7 @@ VM Target Workflow(`app-deploy-eb`·`app-remove-eb`)는 Agent Runway가 보낸 �
 - `target.externalId`(선택, `^[A-Za-z0-9+=,.@:/-]{2,1224}$`): 다른 AWS 계정의 Target에 있습니다. `target.sh`가 deploy role을 넘겨받을 때 `--external-id`로 보냅니다. 형식이 다르면 단계가 실패합니다.
 - `target.installScript`(선택, 16 KiB 이하, 첫 줄 `#!/bin/bash` 또는 `#!/bin/sh`): 관리자가 정한, 각 instance에 필요한 것을 설치하는 스크립트입니다. 비밀 값을 넣지 않습니다.
 
-eks-demo 노드는 모두 Spot입니다. `app-build-v2`의 각 단계는 Spot 회수로 Pod가 지워지거나 SIGTERM(exit code 143)으로 끝나면 같은 작업 volume으로 최대 2번 다시 실행합니다. 단계 자체의 실패(다른 exit code, 단계 deadline)는 다시 실행하지 않습니다. 회수로 끝난 `build`·`manifest`는 다음 시도를 위해 push credential을 남깁니다.
+빌드 노드는 Spot일 수 있습니다. Pod 유실·SIGTERM에 한해 최대 2번 재개합니다. 앱 명령의 실패는 다시 실행하지 않습니다. 게시 재개는 기존 산출물의 digest·해시를 확인하며 다른 바이트로 덮어쓰지 않습니다. 자격 증명을 source volume에 남기지 않습니다.
 
 `resource-sync`는 `resources-<slug>-<env>`, `app-deploy`와 `app-remove`는 같은 `deploy-<slug>-<env>` mutex를 잡습니다.
 환경 디렉터리는 commit 두 번으로 지웁니다. 마지막 `app.yaml`이나 리소스를 지우는 commit은 디렉터리에 빈 `resources.yaml`을 남깁니다. 그래서 Application이 남아 있는 동안 Argo CD가 workload와 리소스를 정리합니다. namespace에 리소스 객체(kro 인스턴스·StatefulSet·PVC)가 남지 않았으면 `cleanup` 단계가 디렉터리를 지우는 두 번째 commit을 만듭니다. ApplicationSet이 빈 Application을 삭제하고, Argo CD가 남은 테넌트 객체를 정리합니다. 객체가 남은 `S3Bucket`처럼 아직 삭제 중인 객체가 있거나 그 사이에 `app.yaml`·리소스가 다시 생기면 디렉터리는 빈 선언으로 남습니다. Workflow는 성공합니다. CronWorkflow `env-cleanup`이 15분마다 `scan`으로 빈 선언 디렉터리를 찾고, 환경마다 `deploy-<slug>-<env>` mutex 안에서 `live`·`prune`을 다시 실행합니다. 지울 디렉터리가 없으면 commit하지 않습니다. Argo CD가 만든 namespace는 남습니다. 같은 환경의 다음 Workflow는 앞 Workflow가 끝날 때까지 `Pending`으로 기다리고, 다른 환경과 `app-build-v2`는 기다리지 않습니다.
@@ -96,7 +96,7 @@ eks-demo 노드는 모두 Spot입니다. `app-build-v2`의 각 단계는 Spot �
 Project가 모든 단계에 환경 이름을 붙이도록 고르면 마지막 단계도 `https://<slug>-<env>.apps.rovr.dev`입니다.
 환경은 Agent Runway 콘솔에서만 관리합니다. 이 저장소와 argocd-env-apps에는 환경 목록이 없습니다.
 
-인증서와 DNS는 terraform-env-demo `demo/3-alb`가, push 역할은 terraform-env-opsp `demo/8-app-delivery`가 만듭니다.
+인증서와 DNS는 terraform-env-demo `demo/3-alb`가 관리합니다. Nexus 저장소와 읽기·게시·삭제 계정은 argocd-env-addons의 Nexus 동기화가 준비합니다.
 
 ## 변경과 검증
 
@@ -107,11 +107,7 @@ chart를 바꾸면 다음을 실행합니다. Helm 4와 Python `pyyaml`이 필�
 ```
 
 - `projects/`는 직접 고치지 않습니다. 값을 바꾸려면 앱 저장소의 `application.yaml`을 고치고 Agent Runway에 다시 적용한 뒤 새 Delivery를 시작합니다.
-- 앱을 내리려면 `projects/<slug>/<env>/` 디렉터리를 지우는 PR을 병합합니다. Argo CD가 Application과 그 리소스(kro 인스턴스 포함)를 지웁니다.
-  `RdsPostgres`는 final snapshot `<DB 식별자>-final-<인스턴스 UID>`만 남기고 RDS가 삭제됩니다. `DynamoTable`은 backup 없이 삭제됩니다.
-  `resources/<name>.yaml`의 `postgres`·`valkey`는 Application과 함께 PVC까지 삭제되어 데이터가 사라집니다.
-  `S3Bucket`은 bucket이 비어 있을 때만 삭제됩니다. 객체가 남아 있으면 인스턴스가 `BucketNotEmpty` 메시지와 함께 남고 Application 삭제도 끝나지 않으므로,
-  객체(버전 포함)를 지운 뒤 다시 확인합니다. namespace `app-<slug>-<env>`는 남으므로 확인한 뒤 지웁니다.
+- 앱은 Runway의 `service_remove`로, 프로젝트 전체는 `project_delete`로 삭제합니다. 서비스와 리소스가 없어지면 workflow가 빈 디렉터리를 정리하고 Argo CD가 namespace까지 제거합니다. GitOps 파일이나 namespace를 직접 삭제하지 않습니다. DB·bucket의 데이터와 snapshot 보존은 각 리소스의 삭제 정책을 따릅니다.
 - 환경 하나에 `RdsPostgres`·`S3Bucket`·`DynamoTable`은 종류마다 2개까지입니다(ResourceQuota `count/rdspostgres.kro.run`·`count/s3buckets.kro.run`·`count/dynamotables.kro.run`). 볼륨은 4개, 합계 200Gi까지입니다.
 
 ## 환경 추가
@@ -127,3 +123,19 @@ Agent Runway 콘솔에서 환경을 추가하면 됩니다. 이 저장소와 arg
 ### 앱 준비 상태와 생존 확인
 
 `runtime.health`는 startup·readiness probe와 배포 검증에 사용합니다. 선택 필드 `runtime.liveness`는 EKS liveness probe에만 사용하며, 생략하면 `health`와 같은 경로입니다. DB를 쓰는 새 앱은 준비 상태 경로에서 현재 DB 연결을 확인하고, 생존 경로에서는 프로세스 응답만 확인합니다. DB 장애가 트래픽을 중단하되 불필요한 Pod 재시작을 일으키지 않도록 두 경로를 분리합니다. EB의 상태 확인은 계속 `runtime.health`를 사용합니다.
+
+
+## Nexus와 native 배포 설정
+
+`charts/delivery`에는 `registry`(예: `nexus.example/runway-images`)와 `artifactRepository`
+(예: `https://nexus.example/repository/runway-artifacts`)를 함께 지정한다. 두 저장소는 immutable 게시 정책을 사용한다.
+`delivery-nexus` ExternalSecret은 SSM의 publisher·reader 비밀번호를 가져온다. 게시 계정은 두 publisher 단계만,
+읽기 계정은 native deploy 단계만 받는다. EKS 앱의 kubelet은 별도 `nexus-reader` Secret을 사용하며 앱 환경 변수에는 넣지 않는다.
+
+빌드와 테스트는 Project architecture의 노드에서 실행한다. `platforms`는 하나만 받으며 QEMU를 사용하지 않는다.
+Nexus 이미지 tag는 `<pipeline>-<Release ID>`, 파일 경로는 `<project>/<pipeline>/<Release ID>/app.<format>`이다.
+승격은 이 산출물을 다시 빌드하지 않는다. 파일 출력은 일반 파일 하나, 최대 450 MiB이며 symlink·경로 이탈·해시 불일치를 거부한다.
+
+EB는 Java SE의 executable JAR 또는 Tomcat의 ROOT.war를 실행한다. Docker Compose와 instance ECR pull은 사용하지 않는다.
+현재 Java 플랫폼의 `environmentsecrets` 기능으로 SSM ARN만 전달하며 secret 값을 bundle에 저장하지 않는다.
+기존 ECR workflow와 호환되지 않으므로 진행 중인 배포를 끝내고, 서비스·workflow·Nexus 설정을 함께 전환한다.

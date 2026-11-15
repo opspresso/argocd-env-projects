@@ -4,7 +4,7 @@ metadata:
   name: delivery-settings
 data:
   REGISTRY: {{ required "registry is required" .Values.registry | quote }}
-  PUSH_ROLE_ARN: {{ required "pushRoleArn is required" .Values.pushRoleArn | quote }}
+  ARTIFACT_REPOSITORY: {{ required "artifactRepository is required" .Values.artifactRepository | quote }}
   AWS_REGION: {{ .Values.region | quote }}
   AWS_DEFAULT_REGION: {{ .Values.region | quote }}
   GITOPS_REPOSITORY: {{ .Values.gitops.repository | quote }}
@@ -52,7 +52,24 @@ kind: ConfigMap
 metadata:
   name: delivery-scripts
 data:
-{{- range list "render.jq" "check-resources.sh" "commit.sh" "target.sh" "eb-bundle.py" "eb-stack.yaml" }}
+{{- range list "render.jq" "check-resources.sh" "commit.sh" "target.sh" "eb-bundle.py" "eb-stack.yaml" "artifacts.py" }}
   {{ . }}: |
 {{ $.Files.Get (printf "files/%s" .) | indent 4 }}
 {{- end }}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: delivery-nexus
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: parameter-store}
+  target:
+    name: delivery-nexus
+  data:
+    - secretKey: publisherPassword
+      remoteRef:
+        key: {{ .Values.nexus.publisherPasswordKey | quote }}
+    - secretKey: readerPassword
+      remoteRef:
+        key: {{ .Values.nexus.readerPasswordKey | quote }}
