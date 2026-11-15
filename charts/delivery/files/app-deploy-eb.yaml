@@ -82,36 +82,21 @@ spec:
             printf '%s' "$APPLICATION" > /tmp/application.json
             install_script /tmp/install.sh
             python3 -I /etc/delivery-scripts/eb-bundle.py /tmp/application.json /tmp/application-artifact "$secrets_path" "$(field region)" "$(field account)" /tmp/bundle.zip /tmp/install.sh
-            assume_target "deploy-${DEPLOYMENT}"
+            format=$(printf '%s' "$APPLICATION" | jq -r '.native.format')
+            python3 -I /etc/delivery-scripts/eb-bundle.py bootstrap "$format" /tmp/bootstrap.zip
             key="${PROJECT}/${ENVIRONMENT}/${DEPLOYMENT}.zip"
-            aws s3 cp --only-show-errors /tmp/bundle.zip "s3://$(field artifactBucket)/${key}"
-            # An earlier attempt of this step may have left an operation running; deploy after it ends.
-            until status=$(aws cloudformation describe-stacks --stack-name "$stack" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo NONE); \
-              case "$status" in *_IN_PROGRESS) false;; *) true;; esac; do
-              echo "Waiting for stack $stack ($status)"; sleep 15
-            done
-            # A first creation that failed leaves the stack in ROLLBACK_COMPLETE without its resources, and CloudFormation
-            # updates no such stack. Delete it, so that this Deployment creates the stack again.
-            if [ "$status" = ROLLBACK_COMPLETE ]; then
-              echo "Deleting stack $stack, whose first creation failed"
-              aws cloudformation delete-stack --stack-name "$stack"
-              aws cloudformation wait stack-delete-complete --stack-name "$stack"
-            fi
-            echo "Updating stack ${stack} to Deployment ${DEPLOYMENT} (native artifact)"
-            aws cloudformation deploy --stack-name "$stack" --template-file /etc/delivery-scripts/eb-stack.yaml \
-              --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset \
-              --tags "opspresso.com/delivery-project=${PROJECT}" "opspresso.com/delivery-env=${ENVIRONMENT}" \
-              --parameter-overrides \
-                "Project=${PROJECT}" "Environment=${ENVIRONMENT}" "DeploymentId=${DEPLOYMENT}" \
-                "SolutionStackName=$(field solutionStack)" "ServiceRoleArn=$(field serviceRole)" \
-                "PermissionsBoundaryArn=$(field permissionsBoundary)" \
-                "VersionBucket=$(field artifactBucket)" "VersionKey=${key}" "VpcId=$(field vpcId)" \
-                "InstanceSubnets=$(list instanceSubnets)" "LoadBalancerSubnets=$(list loadBalancerSubnets)" \
-                "CertificateArn=$(field certificateArn)" "HostedZoneId=$(field hostedZoneId)" "Host=${HOST}" \
-                "InstanceType=${instance_type}" "MinSize=${min}" "MaxSize=${max}" "HealthPath=${health}" "Rollout=${rollout}" \
-                "SecretsPath=${secrets_path}" "SecretsKeyArn=$(field secretsKeyArn)" \
-              || { aws cloudformation describe-stack-events --stack-name "$stack" --max-items 20 \
-                     --query 'StackEvents[?contains(ResourceStatus, `FAILED`)].[LogicalResourceId,ResourceStatusReason]' --output text || true; exit 1; }
+            jq -n \
+              --arg Project "$PROJECT" --arg Environment "$ENVIRONMENT" --arg DeploymentId "$DEPLOYMENT" \
+              --arg SolutionStackName "$(field solutionStack)" --arg ServiceRoleArn "$(field serviceRole)" \
+              --arg PermissionsBoundaryArn "$(field permissionsBoundary)" \
+              --arg VersionBucket "$(field artifactBucket)" --arg VersionKey "$key" --arg VpcId "$(field vpcId)" \
+              --arg InstanceSubnets "$(list instanceSubnets)" --arg LoadBalancerSubnets "$(list loadBalancerSubnets)" \
+              --arg CertificateArn "$(field certificateArn)" --arg HostedZoneId "$(field hostedZoneId)" --arg Host "$HOST" \
+              --arg InstanceType "$instance_type" --arg MinSize "$min" --arg MaxSize "$max" \
+              --arg HealthPath "$health" --arg Rollout "$rollout" --arg SecretsPath "$secrets_path" \
+              --arg SecretsKeyArn "$(field secretsKeyArn)" '$ARGS.named' > /tmp/parameters.json
+            assume_target "deploy-${DEPLOYMENT}"
+            python3 -I /etc/delivery-scripts/eb-deploy.py /tmp/parameters.json /tmp/bundle.zip /tmp/bootstrap.zip
         env:
           - &id001 {name: PROJECT, value: "{{workflow.parameters.project}}"}
           - &id002 {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
