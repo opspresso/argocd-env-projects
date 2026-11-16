@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-# One Project environment on an aws-eb Target (agent-platform docs/DELIVERY_V3.md D2). The app-deploy-eb Workflow
+# One Project environment on an aws-eb Target (agent-platform docs/APP_DELIVERY.md, target). The app-deploy-eb Workflow
 # creates or updates the stack runway-<project>-<environment> with the Release's source bundle; the app-remove-eb
 # Workflow deletes it. Every value comes from Agent Runway and the Target, never from the app repository.
 Description: Agent Runway app on Elastic Beanstalk (native Java)

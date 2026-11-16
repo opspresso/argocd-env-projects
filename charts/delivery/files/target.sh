@@ -2,7 +2,7 @@
 # Checks the parameters, reads the Target JSON and assumes the Target's deploy role. The step's ServiceAccount
 # (delivery-target) may assume only roles named agent-runway-target-deploy (terraform-env-demo demo/4-role), and the
 # session tags limit the deploy role to this Project environment's stack.
-# A Target in another AWS account has externalId (agent-platform docs/DELIVERY_V4.md D4), which that account's trust
+# A Target in another AWS account has externalId (agent-platform docs/APP_DELIVERY.md, 외부 계정), which that account's trust
 # policy requires.
 
 printf '%s' "$PROJECT" | grep -qE '^[a-z][a-z0-9-]{1,30}[a-z0-9]$' || { echo "Invalid project $PROJECT"; exit 1; }
@@ -49,7 +49,7 @@ assume_target() {
 }
 
 # The instance type of this Project environment. Agent Runway resolves the Project's size into
-# application.environment.instanceType (agent-platform docs/DELIVERY_V4.md D3).
+# application.environment.instanceType (agent-platform docs/APP_DELIVERY.md, 크기).
 instance_type() {
   printf '%s' "$APPLICATION" | jq -er '.environment.instanceType | strings | select(test("\\A[a-z][a-z0-9-]*\\.[a-z0-9]+\\z"))' \
     || { echo "application field environment.instanceType is missing or is not an instance type" >&2; exit 1; }
@@ -67,7 +67,7 @@ rollout() {
   esac
 }
 
-# Writes the Target's install script (agent-platform docs/DELIVERY_V4.md D5) to the file $1. The file is empty when
+# Writes the Target's install script (agent-platform docs/APP_DELIVERY.md, 설치 스크립트) to the file $1. The file is empty when
 # the Target has none. The script is at most 16 KiB and starts with #!/bin/bash or #!/bin/sh.
 install_script() {
   printf '%s' "$TARGET" | jq -e '.installScript // "" | strings' >/dev/null \

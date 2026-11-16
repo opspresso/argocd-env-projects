@@ -1,4 +1,4 @@
-# Stops the service of one Project environment on an aws-eb Target (agent-platform docs/DELIVERY_V3.md D2): deletes
+# Stops the service of one Project environment on an aws-eb Target (agent-platform docs/APP_DELIVERY.md, target): deletes
 # the stack runway-<project>-<environment>. Resources and Variables stay. Agent Runway names the Workflow
 # deploy-<Deployment ID>. Same parameters and DAG task names as app-remove, plus target.
 apiVersion: argoproj.io/v1alpha1

@@ -3,7 +3,7 @@
 Working rules for coding agents in this repository (`CLAUDE.md` is a symlink to this file).
 
 This repository is the GitOps home of the apps that Agent Runway deploys. The contract is
-`agent-platform/docs/APP_DELIVERY.md` and `../agent-platform/docs/DELIVERY_V2.md`; [README.md](README.md) explains the layout and the Delivery steps.
+`agent-platform/docs/APP_DELIVERY.md` and `agent-platform/docs/DELIVERY_RESOURCES.md`; [README.md](README.md) explains the layout and the Delivery steps.
 
 ## Ownership
 
@@ -52,7 +52,7 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   pass through Helm; cluster values reach the steps through ConfigMap `delivery-settings`, and the shared scripts
   (`render.jq`, `check-resources.sh`, `commit.sh`) through ConfigMap `delivery-scripts`.
 - Keep the WorkflowTemplate names, parameters, results and DAG task names of the Workflow contract in
-  `docs/DELIVERY_V2.md` (`app-build-v2`: `checkout`, `check-application`, `test`, `build`, `build-artifact`, `publish-image`, `publish-artifact`; `app-deploy`:
+  agent-platform `docs/APP_DELIVERY.md#workflow` (`app-build-v2`: `checkout`, `check-application`, `test`, `build`, `build-artifact`, `publish-image`, `publish-artifact`; `app-deploy`:
   `deploy`, `verify`; `app-remove`: `remove`, `verify`; `resource-sync`: `write`). Agent Runway submits them and maps failed tasks to its steps.
 - `resource-sync` holds the mutex `resources-<project>-<environment>`; `app-deploy` and `app-remove` share
   `deploy-<project>-<environment>`. Argo Workflows v4 accepts only `synchronization.mutexes`.
@@ -61,16 +61,16 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   `passwordSecret`, `persistence`, `maxMemoryMiB` and `peer`. AppProject `projects` must allow the same kinds and the
   kinds those charts render.
 - Steps that run app code (`test`, `build`, `build-artifact`) get no Git credential, AWS identity, Kubernetes token or Nexus credential. Only publisher steps receive the publish credential and mount source read-only.
-- `app-deploy-eb` and `app-remove-eb` deploy to and remove from an `aws-eb` Target (agent-platform `docs/DELIVERY_V3.md` D2).
+- `app-deploy-eb` and `app-remove-eb` deploy to and remove from an `aws-eb` Target (agent-platform `docs/APP_DELIVERY.md#target`).
   They keep the parameters, results and DAG task names of `app-deploy` and `app-remove` and add `target`. Only their
   steps run as `delivery-target`, which may assume only the Target deploy role `agent-runway-target-deploy`
   (`target.sh` checks it). The stack (`eb-stack.yaml`) and the source bundle (`eb-bundle.py`) take every value from
   Agent Runway and the Target. Secret values never enter the bundle, the stack or the Workflow: Elastic Beanstalk resolves their SSM ARN references through the instance role when the app starts.
 - The VM Target steps read the instance type and counts only from `application.environment` (`instanceType`,
-  `replicas`, `maxReplicas`); Agent Runway resolves the Project's size into them (agent-platform `docs/DELIVERY_V4.md`
-  D3). The optional `application.environment.rollout` chooses the Elastic Beanstalk deployment policy: `immutable`
-  (the default) or `all-at-once`, which Agent Runway sends only for a sandbox environment. The optional `target.externalId` (D4) goes to every `aws sts assume-role` of `target.sh`. The optional
-  `target.installScript` (D5) runs on each instance before the app, as the prebuild hook `00-install.sh` of the EB
+  `replicas`, `maxReplicas`); Agent Runway resolves the Project's size into them (agent-platform
+  `docs/APP_DELIVERY.md#크기`). The optional `application.environment.rollout` chooses the Elastic Beanstalk deployment policy: `immutable`
+  (the default) or `all-at-once`, which Agent Runway sends only for a sandbox environment. The optional `target.externalId` (`docs/APP_DELIVERY.md#외부-계정`) goes to every `aws sts assume-role` of `target.sh`. The optional
+  `target.installScript` (`docs/APP_DELIVERY.md#설치-스크립트`) runs on each instance before the app, as the prebuild hook `00-install.sh` of the EB
   bundle. A non-zero exit fails the Deployment.
 
 ## Validation
