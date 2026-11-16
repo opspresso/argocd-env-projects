@@ -3,7 +3,7 @@
 Agent Runway가 배포하는 앱의 GitOps 저장소입니다. Studio Agent가 Agent Runway MCP로 시작한 Deployment가 이 저장소에
 배포 값을 기록하고, Argo CD가 그 값을 EKS `eks-demo`에 동기화합니다.
 전체 계약은 [agent-platform `docs/APP_DELIVERY.md`](https://github.com/opspresso/agent-platform/blob/main/docs/APP_DELIVERY.md)와
-[`docs/DELIVERY_V2.md`](https://github.com/opspresso/agent-platform/blob/main/docs/DELIVERY_V2.md)에 있습니다.
+[`docs/DELIVERY_RESOURCES.md`](https://github.com/opspresso/agent-platform/blob/main/docs/DELIVERY_RESOURCES.md)에 있습니다.
 
 ## 구성
 

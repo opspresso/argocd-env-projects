@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Renders both charts the way Argo CD does and checks the contract of agent-platform docs/APP_DELIVERY.md and
-# docs/DELIVERY_V2.md.
+# docs/DELIVERY_RESOURCES.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
