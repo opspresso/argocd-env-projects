@@ -1,0 +1,82 @@
+# Written by the app-deploy workflow for Deployment bf1c5f17-0775-4ed3-8d0f-4b9e2bdd5561. Do not edit.
+deployment: bf1c5f17-0775-4ed3-8d0f-4b9e2bdd5561
+app:
+  controller:
+    enabled: true
+  image:
+    reference: nexus.demo.opsp.dev/runway-images/menu-1116@sha256:1ac28cc8875112cd3c40871c74e41feb84ac8c182cde2482f7a1848996af0567
+  imagePullSecrets:
+    - name: nexus-reader
+  raw:
+    resources:
+      - apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: nexus-reader
+          annotations:
+            argocd.argoproj.io/sync-wave: "-1"
+        spec:
+          refreshInterval: 1h
+          secretStoreRef:
+            kind: SecretStore
+            name: agent-runway
+          target:
+            name: nexus-reader
+            template:
+              type: kubernetes.io/dockerconfigjson
+              engineVersion: v2
+              data:
+                .dockerconfigjson: '{"auths":{"nexus.demo.opsp.dev":{"auth":"{{ printf "runway-reader:%s" .password | b64enc }}"}}}'
+          data:
+            - secretKey: password
+              remoteRef:
+                key: /k8s/common/nexus/runway-reader-password
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    hosts:
+      - menu-1116-dev.apps.rovr.dev
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+  startupProbe:
+    httpGet:
+      path: /ready
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: bf1c5f17-0775-4ed3-8d0f-4b9e2bdd5561
+  configmap:
+    enabled: false
+  podAnnotations:
+    opspresso.com/deployment: bf1c5f17-0775-4ed3-8d0f-4b9e2bdd5561
+  nodeSelector:
+    kubernetes.io/arch: arm64
