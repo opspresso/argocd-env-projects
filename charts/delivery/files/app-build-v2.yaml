@@ -278,7 +278,7 @@ spec:
       tolerations:
         - {key: opspresso.com/delivery-build, operator: Equal, value: "true", effect: NoSchedule}
       container:
-        image: ghcr.io/osscontainertools/kaniko:v1.29.0-debug
+        image: ghcr.io/osscontainertools/kaniko:v1.29.1-debug
         command: [/busybox/sh, -euc]
         args:
           - |
