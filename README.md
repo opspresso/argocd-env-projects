@@ -55,7 +55,7 @@ flowchart LR
 | `app-build-v2` | `build-artifact` | `delivery-runner` | 선언한 builder image와 command로 JAR/WAR를 만든다. 게시 자격 증명이 없다 |
 | `app-build-v2` | `publish-image`·`publish-artifact` | `delivery-runner` | 소스 volume을 읽기 전용으로 연결한다. 별도 Nexus 게시 계정으로 산출물을 올리고 digest 또는 SHA-256·크기를 검증한다 |
 | `app-deploy` | `deploy` | `delivery-git` | 이미지가 그 Project의 digest 고정 이미지인지 확인하고 `projects/<slug>/<env>/app.yaml`에 기록한다. 이 저장소에만 쓰기 권한이 있는 deploy key(SSM `/k8s/common/app-delivery/gitops-deploy-key`)로 push한다 |
-| `app-deploy` | `verify` | `delivery-verify` | rollout 완료와 `https://<host><health>`의 2xx 응답을 기다린다 |
+| `app-deploy` | `verify` | `delivery-verify` | rollout 완료(최대 10분)와 `https://<host><health>`의 2xx 응답(최대 3분)을 기다린다. 이 rollout의 컨테이너가 3번 재시작한 뒤 `CrashLoopBackOff`이면 기다리지 않고 실패한다. 앱 출력은 시크릿을 담을 수 있으므로 적지 않는다 |
 | `app-remove` | `remove` | `delivery-git` | `projects/<slug>/<env>/app.yaml`을 지운다. 리소스는 그대로 둔다 |
 | `app-remove` | `verify` | `delivery-verify` | Argo CD가 namespace의 Deployment `app`을 지울 때까지 기다린다 |
 | `app-remove` | `cleanup` | `delivery-verify`·`delivery-git` | `env-cleanup`의 `check-and-prune`. 아래 `env-cleanup`의 `live`·`prune`과 같다. 이 Workflow가 이미 잡은 mutex 안에서 실행한다 |
