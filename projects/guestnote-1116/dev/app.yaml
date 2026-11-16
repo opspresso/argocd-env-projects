@@ -1,0 +1,87 @@
+# Written by the app-deploy workflow for Deployment 73d80c31-df81-42ac-8ab1-a8218e9ee68d. Do not edit.
+deployment: 73d80c31-df81-42ac-8ab1-a8218e9ee68d
+app:
+  controller:
+    enabled: true
+  image:
+    reference: nexus.demo.opsp.dev/runway-images/guestnote-1116@sha256:79708698491b74f2e68c61a75dd148df5ac319f56d030b15acef1fd84f0af607
+  imagePullSecrets:
+    - name: nexus-reader
+  raw:
+    resources:
+      - apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: nexus-reader
+          annotations:
+            argocd.argoproj.io/sync-wave: "-1"
+        spec:
+          refreshInterval: 1h
+          secretStoreRef:
+            kind: SecretStore
+            name: agent-runway
+          target:
+            name: nexus-reader
+            template:
+              type: kubernetes.io/dockerconfigjson
+              engineVersion: v2
+              data:
+                .dockerconfigjson: '{"auths":{"nexus.demo.opsp.dev":{"auth":"{{ printf "runway-reader:%s" .password | b64enc }}"}}}'
+          data:
+            - secretKey: password
+              remoteRef:
+                key: /k8s/common/nexus/runway-reader-password
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    hosts:
+      - guestnote-1116-dev.apps.rovr.dev
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+  startupProbe:
+    httpGet:
+      path: /ready
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: 73d80c31-df81-42ac-8ab1-a8218e9ee68d
+  configmap:
+    enabled: true
+    data:
+      PGDATABASE: delivery_45ae8dc3cca2432985ab0bbf5c6604fc
+      PGHOST: postgres.delivery-pool.svc.cluster.local
+      PGPORT: "5432"
+      PGUSER: delivery_45ae8dc3cca2432985ab0bbf5c6604fc
+  podAnnotations:
+    opspresso.com/deployment: 73d80c31-df81-42ac-8ab1-a8218e9ee68d
+  nodeSelector:
+    kubernetes.io/arch: arm64
