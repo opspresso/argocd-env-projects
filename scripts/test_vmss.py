@@ -216,6 +216,13 @@ class Plan(Fixture):
         self.assertEqual(plan["runway"]["command"], ["java", "-jar", "application.jar"])
         self.assertEqual(vmss.plan_of(environ(host="todo.dmz.rovr.dev"))["label"], "todo")
 
+    def test_a_name_with_consecutive_hyphens_gets_a_valid_container_name(self):
+        plan = vmss.plan_of({**environ(host="to--do-dmz.dmz.rovr.dev"), "PROJECT": "to--do"})
+        self.assertEqual(plan["name"], "runway-to--do-dmz")
+        self.assertRegex(plan["container"], r"^runway-[0-9a-f]{32}$")  # 3-63 characters, no "--"
+        self.assertEqual(plan["container"], vmss.plan_of({**environ(), "PROJECT": "to--do"}, deploy=False)["container"])
+        self.assertNotEqual(plan["container"], vmss.plan_of({**environ(host="to--do-dev.dmz.rovr.dev"), "PROJECT": "to--do", "ENVIRONMENT": "dev"})["container"])
+
     def refused(self, message, **changes):
         target = {**TARGET, **changes.pop("target", {})}
         application = copy.deepcopy(APPLICATION)
@@ -243,8 +250,6 @@ class Plan(Fixture):
         self.refused("Target is not of kind azure-vmss", target={"kind": "aws-eb"})
         self.refused("replicas and maxReplicas", environment={"replicas": 3, "maxReplicas": 2})
         self.refused("rollout must be", environment={"rollout": "AllAtOnce"})
-        with self.assertRaisesRegex(vmss.Refused, "consecutive hyphens"):
-            vmss.plan_of({**environ(), "PROJECT": "to--do", "HOST": "to--do-dmz.dmz.rovr.dev"})
 
     def test_arm64_sizes_and_resource_id_case(self):
         application = copy.deepcopy(APPLICATION)

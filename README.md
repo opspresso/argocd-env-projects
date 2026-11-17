@@ -85,7 +85,7 @@ VM Target Workflow(`app-deploy-eb`·`app-remove-eb`·`app-deploy-vmss`·`app-rem
 | 리소스 | 위치 | 이름 |
 | --- | --- | --- |
 | 앱 identity(user-assigned), public IP, load balancer, VM scale set, autoscale 설정(`maxReplicas`가 `replicas`보다 클 때만) | `target.resourceGroup` | `runway-<slug>-<env>` |
-| bundle container | `target.artifactStorage` | `runway-<slug>-<env>` |
+| bundle container | `target.artifactStorage` | `runway-<slug>-<env>`. 이름에 `--`가 있으면 container 이름 규칙 때문에 `runway-<sha256(<slug>/<env>)의 앞 32자>` |
 | origin group·origin `app`·custom domain·route | `target.frontDoorProfileId`, endpoint `runway` | `runway-<slug>-<env>` |
 | DNS 레코드 | `target.dnsZoneId` | CNAME `<label>` → endpoint, TXT `_dnsauth.<label>` |
 
@@ -99,7 +99,7 @@ Azure 리소스에는 tag `opspresso-delivery-project`·`opspresso-delivery-env`
 - HTTPS: Front Door가 managed certificate로 `https://<host>`를 받고 HTTP는 HTTPS로 보냅니다. origin은 load balancer의 public IP이고 HTTP로 전달합니다. Host header는 `<host>`입니다.
 - immutable 교체: rolling upgrade가 한 번에 최대 20%(최소 1대)의 새 instance를 먼저 만듭니다. `replicas`가 1이면 추가 instance는 1대입니다. 새 instance가 healthy가 아니면 upgrade가 멈추고 기존 instance가 남습니다.
 - 대기 시간: `deploy`는 instance를 최대 25분, 도메인 확인을 단계 시간(55분) 안에서 기다립니다. `verify`의 HTTPS 확인은 최대 60분입니다. Front Door는 새 custom domain마다 관리형 인증서를 발급합니다. 서비스를 지운 뒤 같은 host로 다시 배포할 때도 새로 발급합니다. 이 인증서가 Front Door edge에 배포되기까지 몇 분에서 1시간이 걸립니다([Microsoft Learn](https://learn.microsoft.com/azure/frontdoor/standard-premium/how-to-configure-https-custom-domain)). eks-demo `dmz`에서는 도메인 확인 뒤 21분이 걸렸습니다. 그래서 host의 첫 배포는 25분 이상 걸릴 수 있습니다.
-- `runtime.health`는 영문자·숫자·`._~/-`로 된 경로만 받습니다. WAR와 `--`가 있는 slug(container 이름 규칙)는 거부합니다.
+- `runtime.health`는 영문자·숫자·`._~/-`로 된 경로만 받습니다. WAR는 거부합니다.
 
 Azure에서 template과 요청 body를 바꾸면 다음으로 확인합니다. 읽기와 preflight 검증만 하며 리소스를 만들거나 바꾸지 않습니다.
 

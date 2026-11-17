@@ -9,7 +9,7 @@ The environment holds PROJECT, ENVIRONMENT, DEPLOYMENT, TARGET and, for deploy a
 
 Resources of the Project environment, all named runway-<project>-<environment>: in target.resourceGroup the app identity,
 the public IP, the load balancer, the scale set and its autoscale setting (vmss-app.json); the bundle container in
-target.artifactStorage; the Front Door origin group, custom domain and route on target.frontDoorProfileId; the records
+target.artifactStorage (runway-<sha256 of <project>/<environment>, 32 hex digits> when the name holds "--"); the Front Door origin group, custom domain and route on target.frontDoorProfileId; the records
 <label> and _dnsauth.<label> in target.dnsZoneId. The app identity gets Key Vault Secrets User on each declared secret
 and Storage Blob Data Reader on the container. No secret value passes through this script: it reads only secret names
 and their metadata.
@@ -54,8 +54,6 @@ def plan_of(environ, deploy=True):
     if not re.fullmatch(r"[a-z][a-z0-9-]{1,30}[a-z0-9]", project) or not re.fullmatch(r"[a-z][a-z0-9]{1,11}", environment):
         raise Refused("invalid project or environment")
     name = f"runway-{project}-{environment}"
-    if "--" in name:
-        raise Refused(f"{name} has consecutive hyphens, which a storage container name may not have")
     target = json.loads(environ["TARGET"])
     if target.get("kind") != "azure-vmss":
         raise Refused("Target is not of kind azure-vmss")
@@ -78,7 +76,9 @@ def plan_of(environ, deploy=True):
         "zone": text("dnsZoneId", rf"/subscriptions/{sub}/resourceGroups/[^/]+/providers/Microsoft\.Network/dnszones/[^/]+", re.I),
         "profile": text("frontDoorProfileId", rf"/subscriptions/{sub}/resourceGroups/[^/]+/providers/Microsoft\.Cdn/profiles/[^/]+", re.I),
     }
-    plan["container"] = name
+    # A storage container name may not hold consecutive hyphens. Such a name gets a hash of the Project environment; it
+    # has no hyphen after "runway-", so it never equals the name of another Project environment.
+    plan["container"] = name if "--" not in name else "runway-" + hashlib.sha256(f"{project}/{environment}".encode()).hexdigest()[:32]
     plan["groupId"] = f"/subscriptions/{subscription}/resourceGroups/{plan['group']}"
     plan["zoneName"] = plan["zone"].rsplit("/", 1)[1].lower()
     plan["labels"] = [project, f"{project}-{environment}"]
