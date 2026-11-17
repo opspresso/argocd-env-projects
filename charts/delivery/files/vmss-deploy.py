@@ -436,9 +436,19 @@ def ready(plan, vms):
     return all(vm["latest"] for vm in vms) and sum(vm["health"] == "healthy" and vm["state"] == "Succeeded" for vm in vms) >= plan["replicas"]
 
 
+RESTARTS = 2  # Rolling upgrades started again for instances that a completed one left on an older model.
+STALE_POLLS = 4  # Polls (15 seconds apart) that must see a completed upgrade with such instances before a restart.
+
+
 def wait_instances(azure, plan, clock, deadline, before=None):
-    """Waits for ready(); with the immutable rollout, also fails when this Deployment's rolling upgrade fails."""
-    started = clock.now()
+    """Waits for ready(); with the immutable rollout, also fails when this Deployment's rolling upgrade fails.
+
+    A rolling upgrade can complete and still leave instances on the older model: on eks-demo dmz, the upgrade that a model
+    change started on 2 instances replaced 1 and reported Completed. An update without changes makes the scale set check its
+    instances against the model again and starts another rolling upgrade (Microsoft Learn, configure rolling upgrades), up
+    to RESTARTS times.
+    """
+    started, restarts, stale = clock.now(), 0, 0
     while True:
         vms = instances(azure, plan)
         if ready(plan, vms):
@@ -451,6 +461,14 @@ def wait_instances(azure, plan, clock, deadline, before=None):
                 raise Refused(f"the rolling upgrade of {plan['name']} is {code}: {((upgrade.get('error') or {}).get('message') or '')[:500]}")
             if not ours and clock.now() - started > 300:
                 raise Refused(f"no rolling upgrade of {plan['name']} started for the new model ({summary(vms)})")
+            left = ours and code == "Completed" and any(not vm["latest"] and vm["state"] != "Deleting" for vm in vms)
+            stale = stale + 1 if left else 0
+            if stale >= STALE_POLLS:
+                if restarts >= RESTARTS:
+                    raise Refused(f"{restarts + 1} rolling upgrades of {plan['name']} completed and left instances on an older model ({summary(vms)})")
+                print(f"The rolling upgrade of {plan['name']} completed and left instances on an older model ({summary(vms)}); starting it again", flush=True)
+                before, restarts, stale, started = upgrade["runningStatus"].get("startTime"), restarts + 1, 0, clock.now()
+                azure.az("vmss", "update", "--resource-group", plan["group"], "--name", plan["name"])
         if clock.now() > deadline:
             raise Refused(f"the instances of {plan['name']} did not all run Deployment {plan['deployment']} healthy in time ({summary(vms)})")
         print(f"Waiting for the instances of {plan['name']}: {summary(vms)}", flush=True)

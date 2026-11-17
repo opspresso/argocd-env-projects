@@ -178,12 +178,20 @@ class FakeAzure:
             gone = set(args[args.index("--instance-ids") + 1:])
             self.instances = [vm for vm in self.instances if vm["id"] not in gone]
             return None
+        if args[:2] == ("vmss", "update"):
+            assert args[2:] == ("--resource-group", "rg-agent-runway-dmz-apps", "--name", "runway-todo-dmz"), args
+            if self.upgrade_on_update is not None:
+                self.upgrade = self.upgrade_on_update.pop(0)
+                if not self.upgrade_on_update:
+                    self.instances = [dict(vm, latest=True) for vm in self.instances]
+            return {}
         if args[:2] == ("vmss", "scale"):
             self.instances += [{"id": "9", "latest": True, "health": "healthy"}]
             return None
         raise AssertionError(f"unexpected az {args}")
 
     upgrade_on_model = None
+    upgrade_on_update = None
 
 
 class Fixture(unittest.TestCase):
@@ -347,6 +355,24 @@ class Deploy(Fixture):
         azure.upgrade_on_model = {"runningStatus": {"code": "Completed", "startTime": "earlier"}}
         with self.assertRaisesRegex(vmss.Refused, "no rolling upgrade"):
             self.deploy(azure)
+
+    def test_a_completed_upgrade_that_left_old_instances_starts_again(self):
+        azure = FakeAzure(existing=True)
+        azure.instances = [{"id": "1", "latest": True, "health": "healthy"}, {"id": "2", "latest": True, "health": "healthy"}]
+        azure.upgrade_on_model = {"runningStatus": {"code": "Completed", "startTime": "2026-11-17T02:00:00Z"}}
+        azure.upgrade_on_update = [{"runningStatus": {"code": "Completed", "startTime": "2026-11-17T02:10:00Z"}}]
+        self.deploy(azure)
+        updates = [entry for entry in azure.log if entry[0] == "az" and entry[1][:2] == ("vmss", "update")]
+        self.assertEqual(len(updates), 1)
+        self.assertTrue(all(vm["latest"] for vm in azure.instances))
+
+    def test_upgrades_that_keep_leaving_old_instances_fail(self):
+        azure = FakeAzure(existing=True)
+        azure.upgrade_on_model = {"runningStatus": {"code": "Completed", "startTime": "2026-11-17T02:00:00Z"}}
+        azure.upgrade_on_update = [{"runningStatus": {"code": "Completed", "startTime": f"2026-11-17T02:1{i}:00Z"}} for i in range(vmss.RESTARTS + 1)]
+        with self.assertRaisesRegex(vmss.Refused, "3 rolling upgrades of runway-todo-dmz completed and left instances on an older model"):
+            self.deploy(azure)
+        self.assertEqual(len([e for e in azure.log if e[0] == "az" and e[1][:2] == ("vmss", "update")]), vmss.RESTARTS)
 
     def test_all_at_once_replaces_old_instances(self):
         application = copy.deepcopy(APPLICATION)
