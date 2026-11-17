@@ -78,6 +78,7 @@ spec:
             min=$(printf '%s' "$APPLICATION" | jq -r '.environment.replicas // 1')
             max=$(printf '%s' "$APPLICATION" | jq -r '.environment.maxReplicas // .environment.replicas // 1')
             health=$(printf '%s' "$APPLICATION" | jq -r '.runtime.health // "/health"')
+            public_ip=$(public_ip)
 
             printf '%s' "$APPLICATION" > /tmp/application.json
             install_script /tmp/install.sh
@@ -91,6 +92,7 @@ spec:
               --arg PermissionsBoundaryArn "$(field permissionsBoundary)" \
               --arg VersionBucket "$(field artifactBucket)" --arg VersionKey "$key" --arg VpcId "$(field vpcId)" \
               --arg InstanceSubnets "$(list instanceSubnets)" --arg LoadBalancerSubnets "$(list loadBalancerSubnets)" \
+              --arg InstancePublicIp "$public_ip" \
               --arg CertificateArn "$(field certificateArn)" --arg HostedZoneId "$(field hostedZoneId)" --arg Host "$HOST" \
               --arg InstanceType "$instance_type" --arg MinSize "$min" --arg MaxSize "$max" \
               --arg HealthPath "$health" --arg Rollout "$rollout" --arg SecretsPath "$secrets_path" \

@@ -66,6 +66,8 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   steps run as `delivery-target`, which may assume only the Target deploy role `agent-runway-target-deploy`
   (`target.sh` checks it). The stack (`eb-stack.yaml`) and the source bundle (`eb-bundle.py`) take every value from
   Agent Runway and the Target. Secret values never enter the bundle, the stack or the Workflow: Elastic Beanstalk resolves their SSM ARN references through the instance role when the app starts.
+  The instances get public addresses only when the Target puts them in its load balancer subnets (`target.sh` `public_ip`):
+  those subnets are public and have no NAT, as in the default VPC. Instances in other (private) subnets get none.
 - The VM Target steps read the instance type and counts only from `application.environment` (`instanceType`,
   `replicas`, `maxReplicas`); Agent Runway resolves the Project's size into them (agent-platform
   `docs/APP_DELIVERY.md#크기`). The optional `application.environment.rollout` chooses the Elastic Beanstalk deployment policy: `immutable`
