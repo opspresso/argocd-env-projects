@@ -570,7 +570,7 @@ def prune_bundles(azure, plan):
 
 
 def tags(plan):
-    return {"opspresso.com/delivery-project": plan["project"], "opspresso.com/delivery-env": plan["environment"]}
+    return {"opspresso-delivery-project": plan["project"], "opspresso-delivery-env": plan["environment"]}
 
 
 def verify(plan, azure, clock=Clock, timeout=600):
@@ -580,7 +580,7 @@ def verify(plan, azure, clock=Clock, timeout=600):
         vmss = arm_get(azure, ids(plan)["vmss"])
         if vmss is None:
             raise Refused(f"scale set {plan['name']} does not exist")
-        deployed = (vmss.get("tags") or {}).get("opspresso.com/delivery-deployment")
+        deployed = (vmss.get("tags") or {}).get("opspresso-delivery-deployment")
         vms = instances(azure, plan)
         if deployed == plan["deployment"] and ready(plan, vms):
             return

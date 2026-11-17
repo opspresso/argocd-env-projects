@@ -9,7 +9,7 @@
     "location": {"type": "string"},
     "project": {"type": "string"},
     "environment": {"type": "string"},
-    "deployment": {"type": "string", "metadata": {"description": "The Agent Runway Deployment that last changed the scale set (tag opspresso.com/delivery-deployment)."}},
+    "deployment": {"type": "string", "metadata": {"description": "The Agent Runway Deployment that last changed the scale set (tag opspresso-delivery-deployment)."}},
     "identityId": {"type": "string", "metadata": {"description": "The user-assigned identity runway-<project>-<environment>: it reads the bundle and the declared secrets."}},
     "subnetId": {"type": "string"},
     "vmSize": {"type": "string"},
@@ -22,8 +22,8 @@
   },
   "variables": {
     "tags": {
-      "opspresso.com/delivery-project": "[parameters('project')]",
-      "opspresso.com/delivery-env": "[parameters('environment')]"
+      "opspresso-delivery-project": "[parameters('project')]",
+      "opspresso-delivery-env": "[parameters('environment')]"
     },
     "lbId": "[resourceId('Microsoft.Network/loadBalancers', parameters('name'))]",
     "frontendId": "[concat(variables('lbId'), '/frontendIPConfigurations/public')]",
@@ -110,7 +110,7 @@
       "apiVersion": "2024-07-01",
       "name": "[parameters('name')]",
       "location": "[parameters('location')]",
-      "tags": "[union(variables('tags'), createObject('opspresso.com/delivery-deployment', parameters('deployment')))]",
+      "tags": "[union(variables('tags'), createObject('opspresso-delivery-deployment', parameters('deployment')))]",
       "dependsOn": ["[variables('lbId')]"],
       "sku": {"name": "[parameters('vmSize')]", "tier": "Standard", "capacity": "[parameters('replicas')]"},
       "identity": {
