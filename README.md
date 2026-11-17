@@ -62,18 +62,51 @@ flowchart LR
 | `app-deploy-eb` | `deploy` | `delivery-target` | Nexus 파일을 읽기 계정으로 내려받아 기록한 SHA-256·크기를 확인한다. JAR/ROOT.war와 EB 환경 secret의 SSM ARN 참조를 bundle에 넣고 target 계정의 stack을 배포한다. 설치 스크립트는 prebuild hook으로 실행하며 실패하면 배포가 실패한다 |
 | `app-deploy-eb` | `verify` | `delivery-target` | Elastic Beanstalk 환경이 이 Deployment의 version을 `Ok` health로 실행하고 `https://<host><health>`가 2xx를 반환할 때까지 기다린다 |
 | `app-remove-eb` | `remove`·`verify` | `delivery-target` | stack `runway-<slug>-<env>`를 지우고 없어졌는지 확인한다. 리소스와 Variable은 남긴다 |
+| `app-deploy-vmss` | `deploy` | `delivery-target` | Nexus 파일을 읽기 계정으로 내려받아 기록한 SHA-256·크기를 확인한다. 앱 identity에 선언한 secret과 bundle container만 읽는 역할을 주고, JAR와 실행 설정을 container에 올린 뒤 `vmss-app.json`과 Front Door route를 배포한다. 새 instance가 healthy가 되고 Front Door가 도메인을 확인할 때까지 기다린다 |
+| `app-deploy-vmss` | `verify` | `delivery-target` | scale set이 이 Deployment를 싣고 모든 instance가 그 model로 healthy인지(최대 10분), `https://<host><health>`가 2xx를 반환하는지(최대 20분) 확인한다 |
+| `app-remove-vmss` | `remove`·`verify` | `delivery-target` | Front Door route·custom domain·origin group, DNS 레코드, scale set·autoscale·load balancer·public IP, 앱 identity와 역할 할당, bundle container를 지우고 없어졌는지 확인한다. 리소스와 Variable(Key Vault secret)은 남긴다 |
 | `resource-sync` | `write` | `delivery-git` | manifest가 허용한 kro 인스턴스 종류(`resourceKinds`) 또는 chart(`resourceCharts`)이고 그 환경 namespace에 속하는지, 이름이 `^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$`이고 고유한지 확인하고 `projects/<slug>/<env>/resources.yaml`과 `resources/<name>.yaml`을 통째로 바꾼다. 리소스를 모두 지우려면 `{apiVersion: v1, kind: List, items: []}` 문서를 보낸다. 빈 manifest는 거부한다 |
 | `resource-sync` | `cleanup` | `delivery-verify`·`delivery-git` | `env-cleanup`의 `locked`. `deploy-<slug>-<env>` mutex를 잡고 `check-and-prune`을 실행한다 |
 | `env-cleanup` | `scan` | `delivery-verify` | 공개 저장소를 자격 증명 없이 clone하고, `app.yaml`·`resources/<name>.yaml`이 없고 `resources.yaml`에 주석만 있는 환경 디렉터리를 찾는다 |
 | `env-cleanup` | `live` | `delivery-verify` | namespace에 kro 인스턴스(`RESOURCE_KINDS`)·StatefulSet·PVC가 남았는지 확인한다(삭제 중인 객체 포함). 남아 있으면 `not empty yet`을 기록하고 성공한다. API 오류만 실패한다 |
 | `env-cleanup` | `prune` | `delivery-git` | `live`가 남은 객체가 없다고 할 때만 실행한다. `commit.sh PRUNE_EMPTY`로 디렉터리가 여전히 비었으면 지우고, 아니면 `not empty`를 출력하고 아무것도 바꾸지 않는다 |
 
-VM Target Workflow(`app-deploy-eb`·`app-remove-eb`)는 Agent Runway가 보낸 값만 씁니다.
+VM Target Workflow(`app-deploy-eb`·`app-remove-eb`·`app-deploy-vmss`·`app-remove-vmss`)는 Agent Runway가 보낸 값만 씁니다.
 
-- instance type과 instance 수: parameter `application`의 `environment.instanceType`, `environment.replicas`(최소), `environment.maxReplicas`(최대). Agent Runway가 Project의 크기 등급을 이 값으로 바꿉니다. `environment.instanceType`이 없거나 instance type 형식이 아니면 `deploy` 단계가 실패합니다.
-- 교체 방식: parameter `application`의 `environment.rollout`(선택). 값이 없거나 `immutable`이면 새 instance가 health check를 통과한 뒤에 기존 instance를 바꿉니다(Elastic Beanstalk `Immutable`). 실패한 배포는 실행 중인 Release를 건드리지 않습니다. `all-at-once`이면 모든 instance가 새 Release를 한꺼번에 받습니다(`AllAtOnce`). 더 빠르지만 교체하는 동안, 그리고 실패한 뒤 되돌리는 동안 앱이 응답하지 않습니다. Agent Runway는 sandbox 환경에만 `all-at-once`를 보냅니다. 다른 값이면 `deploy` 단계가 실패합니다.
+- instance type과 instance 수: parameter `application`의 `environment.instanceType`, `environment.replicas`(최소), `environment.maxReplicas`(최대). Agent Runway가 Project의 크기 등급을 이 값으로 바꿉니다. `environment.instanceType`이 없거나 instance type 형식이 아니면 `deploy` 단계가 실패합니다. `vmss`에서는 Azure VM size(`Standard_...`)이고, `environment.architecture`(`amd64`·`arm64`)와 맞아야 합니다. arm64 size는 vCPU 수 뒤에 `p`가 있습니다(예: `Standard_D2ps_v5`).
+- 교체 방식: parameter `application`의 `environment.rollout`(선택). 값이 없거나 `immutable`이면 새 instance가 health check를 통과한 뒤에 기존 instance를 바꿉니다(Elastic Beanstalk `Immutable`, VM scale set의 surge rolling upgrade). 실패한 배포는 실행 중인 Release를 건드리지 않습니다. `all-at-once`이면 모든 instance가 새 Release를 한꺼번에 받습니다(Elastic Beanstalk `AllAtOnce`, VM scale set은 모든 instance를 한꺼번에 새로 만듭니다). 더 빠르지만 교체하는 동안, 그리고 실패한 뒤 되돌리는 동안 앱이 응답하지 않습니다. Agent Runway는 sandbox 환경에만 `all-at-once`를 보냅니다. 다른 값이면 `deploy` 단계가 실패합니다.
 - `target.externalId`(선택, `^[A-Za-z0-9+=,.@:/-]{2,1224}$`): 다른 AWS 계정의 Target에 있습니다. `target.sh`가 deploy role을 넘겨받을 때 `--external-id`로 보냅니다. 형식이 다르면 단계가 실패합니다.
 - `target.installScript`(선택, 16 KiB 이하, 첫 줄 `#!/bin/bash` 또는 `#!/bin/sh`): 관리자가 정한, 각 instance에 필요한 것을 설치하는 스크립트입니다. 비밀 값을 넣지 않습니다.
+
+### Azure VM scale set(`vmss`)
+
+`app-deploy-vmss`·`app-remove-vmss`의 단계는 `delivery-target`의 projected service-account token(audience `api://AzureADTokenExchange`)으로 `target.deployClientId` 앱에 로그인합니다(`target.sh` `azure_login`). Entra는 `system:serviceaccount:app-delivery:delivery-target`만 이 앱으로 받아들입니다. 이미지는 `mcr.microsoft.com/azure-cli:2.93.0`입니다.
+
+| 리소스 | 위치 | 이름 |
+| --- | --- | --- |
+| 앱 identity(user-assigned), public IP, load balancer, VM scale set, autoscale 설정(`maxReplicas`가 `replicas`보다 클 때만) | `target.resourceGroup` | `runway-<slug>-<env>` |
+| bundle container | `target.artifactStorage` | `runway-<slug>-<env>` |
+| origin group·origin `app`·custom domain·route | `target.frontDoorProfileId`, endpoint `runway` | `runway-<slug>-<env>` |
+| DNS 레코드 | `target.dnsZoneId` | CNAME `<label>` → endpoint, TXT `_dnsauth.<label>` |
+
+Azure 리소스에는 tag `opspresso.com/delivery-project`·`opspresso.com/delivery-env`가 붙습니다. scale set에는 마지막 Deployment ID(`opspresso.com/delivery-deployment`)도 붙습니다. DNS 레코드에는 tag가 없으므로 metadata `deliveryproject`·`deliveryenv`를 붙이고, `app-remove-vmss`는 이 metadata가 같은 레코드만 지웁니다. 같은 zone의 `<slug>.<domain>`이 Project의 다른 환경 것일 수 있기 때문입니다.
+
+- secret: 앱의 `secrets`에 있는 이름마다 Key Vault secret `ar-<sha256(/agent-runway/<target.name>/<slug>/<env>/<NAME>)>`가 있어야 합니다. 없으면 `deploy` 단계가 instance를 바꾸기 전에 실패합니다. 단계는 secret의 metadata만 읽습니다. 앱 identity는 선언한 secret마다 `Key Vault Secrets User`, container에 `Storage Blob Data Reader`를 받습니다. 더 이상 선언하지 않은 secret의 역할은 지웁니다.
+- bundle: container의 `<Deployment>/application.jar`와 `<Deployment>/runway.json`(실행 명령, `env`·`config`의 값, `PORT`, secret 이름)입니다. custom data는 두 blob의 SHA-256을 고정합니다. custom data와 template parameter에는 secret 값과 `env`·`config` 값이 없습니다.
+- instance: Ubuntu 24.04(`Canonical:ubuntu-24_04-lts:server`, arm64는 `server-arm64`)에서 `vmss-boot.sh`가 한 번 실행됩니다. Adoptium 저장소(서명 키 `adoptium.asc`)의 `target.javaRuntime`과 nginx를 설치하고, `target.installScript`를 실행하고, 앱 identity로 bundle과 secret을 읽습니다. secret과 값은 `/etc/runway/env.json`(서비스 사용자 `runway`만 읽기)에만 쓰고, systemd unit `runway-app`이 앱을 실행합니다. 설치 스크립트가 실패하면 앱이 시작하지 않고 배포가 실패합니다.
+- 포트: 앱은 `runtime.port`(`PORT`)에서 받습니다. nginx가 port 80에서 그 포트로 전달합니다(EB와 같은 구조). subnet의 network security group은 port 80에 `AzureFrontDoor.Backend`만 허용합니다. 그 주소는 다른 Front Door profile도 쓰므로, nginx는 이 profile의 `X-Azure-FDID` 요청과 load balancer probe(`168.63.129.16`)만 받습니다. `runtime.port`는 61000일 수 없습니다(Application Health extension의 endpoint).
+- health: load balancer probe와 Front Door probe는 port 80의 `runtime.health`를 HTTP로 확인합니다. Application Health extension(rich state)은 `127.0.0.1:61000/runway-health`를 확인합니다. 이 endpoint는 앱의 health 경로가 2xx일 때만 `Healthy`를 반환합니다. redirect는 실패입니다. 새 instance는 최대 20분 동안 `Initializing`으로 기다립니다.
+- HTTPS: Front Door가 managed certificate로 `https://<host>`를 받고 HTTP는 HTTPS로 보냅니다. origin은 load balancer의 public IP이고 HTTP로 전달합니다. Host header는 `<host>`입니다.
+- immutable 교체: rolling upgrade가 한 번에 최대 20%(최소 1대)의 새 instance를 먼저 만듭니다. `replicas`가 1이면 추가 instance는 1대입니다. 새 instance가 healthy가 아니면 upgrade가 멈추고 기존 instance가 남습니다.
+- 대기 시간: `deploy`는 instance를 최대 25분, 도메인 확인을 단계 시간(55분) 안에서 기다립니다. `verify`의 HTTPS 확인은 최대 20분입니다. 새 custom domain의 인증서와 route는 도메인 확인 뒤 몇 분이 지나야 Front Door edge에 반영됩니다.
+- `runtime.health`는 영문자·숫자·`._~/-`로 된 경로만 받습니다. WAR와 `--`가 있는 slug(container 이름 규칙)는 거부합니다.
+
+Azure에서 template과 요청 body를 바꾸면 다음으로 확인합니다. 읽기와 preflight 검증만 하며 리소스를 만들거나 바꾸지 않습니다.
+
+```bash
+python3 scripts/vmss_validate.py <target JSON 파일> [<VM size> <architecture>]   # az login 필요
+python3 scripts/vmss_boot_check.py [amd64|arm64]                               # Docker 필요, Ubuntu 24.04에서 vmss-boot.sh 실행
+```
 
 빌드 노드는 Spot일 수 있습니다. Pod 유실·SIGTERM에 한해 최대 2번 재개합니다. 앱 명령의 실패는 다시 실행하지 않습니다. 게시 재개는 기존 산출물의 digest·해시를 확인하며 다른 바이트로 덮어쓰지 않습니다. 자격 증명을 source volume에 남기지 않습니다.
 
