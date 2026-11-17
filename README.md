@@ -89,7 +89,7 @@ VM Target Workflow(`app-deploy-eb`·`app-remove-eb`·`app-deploy-vmss`·`app-rem
 | origin group·origin `app`·custom domain·route | `target.frontDoorProfileId`, endpoint `runway` | `runway-<slug>-<env>` |
 | DNS 레코드 | `target.dnsZoneId` | CNAME `<label>` → endpoint, TXT `_dnsauth.<label>` |
 
-Azure 리소스에는 tag `opspresso.com/delivery-project`·`opspresso.com/delivery-env`가 붙습니다. scale set에는 마지막 Deployment ID(`opspresso.com/delivery-deployment`)도 붙습니다. DNS 레코드에는 tag가 없으므로 metadata `deliveryproject`·`deliveryenv`를 붙이고, `app-remove-vmss`는 이 metadata가 같은 레코드만 지웁니다. 같은 zone의 `<slug>.<domain>`이 Project의 다른 환경 것일 수 있기 때문입니다.
+Azure 리소스에는 tag `opspresso-delivery-project`·`opspresso-delivery-env`가 붙습니다. scale set에는 마지막 Deployment ID(`opspresso-delivery-deployment`)도 붙습니다. DNS 레코드에는 tag가 없으므로 metadata `deliveryproject`·`deliveryenv`를 붙이고, `app-remove-vmss`는 이 metadata가 같은 레코드만 지웁니다. 같은 zone의 `<slug>.<domain>`이 Project의 다른 환경 것일 수 있기 때문입니다.
 
 - secret: 앱의 `secrets`에 있는 이름마다 Key Vault secret `ar-<sha256(/agent-runway/<target.name>/<slug>/<env>/<NAME>)>`가 있어야 합니다. 없으면 `deploy` 단계가 instance를 바꾸기 전에 실패합니다. 단계는 secret의 metadata만 읽습니다. 앱 identity는 선언한 secret마다 `Key Vault Secrets User`, container에 `Storage Blob Data Reader`를 받습니다. 더 이상 선언하지 않은 secret의 역할은 지웁니다.
 - bundle: container의 `<Deployment>/application.jar`와 `<Deployment>/runway.json`(실행 명령, `env`·`config`의 값, `PORT`, secret 이름)입니다. custom data는 두 blob의 SHA-256을 고정합니다. custom data와 template parameter에는 secret 값과 `env`·`config` 값이 없습니다.

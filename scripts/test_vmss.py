@@ -165,7 +165,7 @@ class FakeAzure:
         if args[:3] == ("deployment", "group", "create"):
             parameters = json.loads(Path(args[args.index("--parameters") + 1][1:]).read_text())
             self.deployed = parameters
-            self.resources[self.vmss_id()] = {"tags": {"opspresso.com/delivery-deployment": parameters["deployment"]["value"]}, "properties": {}}
+            self.resources[self.vmss_id()] = {"tags": {"opspresso-delivery-deployment": parameters["deployment"]["value"]}, "properties": {}}
             for kind in ("loadBalancers", "publicIPAddresses"):
                 self.resources[f"{APPS}/providers/Microsoft.Network/{kind}/runway-todo-dmz".lower()] = {"properties": {}}
             if parameters["maxReplicas"]["value"] > parameters["replicas"]["value"]:
@@ -289,7 +289,13 @@ class Deploy(Fixture):
             (f"{STORAGE_ID}/blobServices/default/containers/runway-todo-dmz", vmss.BLOB_READER, "ServicePrincipal"),
         ]))
         identity = self.puts(azure, "/userassignedidentities/")[0][1]
-        self.assertEqual(identity["tags"], {"opspresso.com/delivery-project": "todo", "opspresso.com/delivery-env": "dmz"})
+        self.assertEqual(identity["tags"], {"opspresso-delivery-project": "todo", "opspresso-delivery-env": "dmz"})
+        # Azure refuses tag names with any of < > % & \ ? / (InvalidTagNameCharacters).
+        template = (vmss.HERE / "vmss-app.json").read_text()
+        names = [*identity["tags"], *re.findall(r'"(opspresso[^"]*)": "\[parameters', template), *re.findall(r"createObject\('(opspresso[^']+)'", template)]
+        self.assertIn("opspresso-delivery-deployment", names)
+        for name in names:
+            self.assertNotRegex(name, r"[<>%&\\\\?/]")
 
     def test_missing_variable_stops_before_any_instance_changes(self):
         azure = FakeAzure()
