@@ -63,7 +63,7 @@ flowchart LR
 | `app-deploy-eb` | `verify` | `delivery-target` | Elastic Beanstalk 환경이 이 Deployment의 version을 `Ok` health로 실행하고 `https://<host><health>`가 2xx를 반환할 때까지 기다린다 |
 | `app-remove-eb` | `remove`·`verify` | `delivery-target` | stack `runway-<slug>-<env>`를 지우고 없어졌는지 확인한다. 리소스와 Variable은 남긴다 |
 | `app-deploy-vmss` | `deploy` | `delivery-target` | Nexus 파일을 읽기 계정으로 내려받아 기록한 SHA-256·크기를 확인한다. 앱 identity에 선언한 secret과 bundle container만 읽는 역할을 주고, JAR와 실행 설정을 container에 올린 뒤 `vmss-app.json`과 Front Door route를 배포한다. 새 instance가 healthy가 되고 Front Door가 도메인을 확인할 때까지 기다린다 |
-| `app-deploy-vmss` | `verify` | `delivery-target` | scale set이 이 Deployment를 싣고 모든 instance가 그 model로 healthy인지(최대 10분), `https://<host><health>`가 2xx를 반환하는지(최대 45분) 확인한다 |
+| `app-deploy-vmss` | `verify` | `delivery-target` | scale set이 이 Deployment를 싣고 모든 instance가 그 model로 healthy인지(최대 10분), `https://<host><health>`가 2xx를 반환하는지(최대 60분) 확인한다 |
 | `app-remove-vmss` | `remove`·`verify` | `delivery-target` | Front Door route·custom domain·origin group, DNS 레코드, scale set·autoscale·load balancer·public IP, 앱 identity와 역할 할당, bundle container를 지우고 없어졌는지 확인한다. 리소스와 Variable(Key Vault secret)은 남긴다 |
 | `resource-sync` | `write` | `delivery-git` | manifest가 허용한 kro 인스턴스 종류(`resourceKinds`) 또는 chart(`resourceCharts`)이고 그 환경 namespace에 속하는지, 이름이 `^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$`이고 고유한지 확인하고 `projects/<slug>/<env>/resources.yaml`과 `resources/<name>.yaml`을 통째로 바꾼다. 리소스를 모두 지우려면 `{apiVersion: v1, kind: List, items: []}` 문서를 보낸다. 빈 manifest는 거부한다 |
 | `resource-sync` | `cleanup` | `delivery-verify`·`delivery-git` | `env-cleanup`의 `locked`. `deploy-<slug>-<env>` mutex를 잡고 `check-and-prune`을 실행한다 |
@@ -98,7 +98,7 @@ Azure 리소스에는 tag `opspresso-delivery-project`·`opspresso-delivery-env`
 - health: load balancer probe와 Front Door probe는 port 80의 `runtime.health`를 HTTP로 확인합니다. Application Health extension(rich state)은 `127.0.0.1:61000/runway-health`를 확인합니다. 이 endpoint는 앱의 health 경로가 2xx일 때만 `Healthy`를 반환합니다. redirect는 실패입니다. 새 instance는 최대 20분 동안 `Initializing`으로 기다립니다.
 - HTTPS: Front Door가 managed certificate로 `https://<host>`를 받고 HTTP는 HTTPS로 보냅니다. origin은 load balancer의 public IP이고 HTTP로 전달합니다. Host header는 `<host>`입니다.
 - immutable 교체: rolling upgrade가 한 번에 최대 20%(최소 1대)의 새 instance를 먼저 만듭니다. `replicas`가 1이면 추가 instance는 1대입니다. 새 instance가 healthy가 아니면 upgrade가 멈추고 기존 instance가 남습니다.
-- 대기 시간: `deploy`는 instance를 최대 25분, 도메인 확인을 단계 시간(55분) 안에서 기다립니다. `verify`의 HTTPS 확인은 최대 45분입니다. 새 custom domain의 인증서와 route는 도메인 확인 뒤 몇 분이 지나야 Front Door edge에 반영됩니다. 서비스를 지운 뒤 같은 host를 다시 만들면 인증서를 새로 발급하므로 더 오래 걸릴 수 있습니다(eks-demo `dmz`에서 21분).
+- 대기 시간: `deploy`는 instance를 최대 25분, 도메인 확인을 단계 시간(55분) 안에서 기다립니다. `verify`의 HTTPS 확인은 최대 60분입니다. Front Door는 새 custom domain마다 관리형 인증서를 발급합니다. 서비스를 지운 뒤 같은 host로 다시 배포할 때도 새로 발급합니다. 이 인증서가 Front Door edge에 배포되기까지 몇 분에서 1시간이 걸립니다([Microsoft Learn](https://learn.microsoft.com/azure/frontdoor/standard-premium/how-to-configure-https-custom-domain)). eks-demo `dmz`에서는 도메인 확인 뒤 21분이 걸렸습니다. 그래서 host의 첫 배포는 25분 이상 걸릴 수 있습니다.
 - `runtime.health`는 영문자·숫자·`._~/-`로 된 경로만 받습니다. WAR와 `--`가 있는 slug(container 이름 규칙)는 거부합니다.
 
 Azure에서 template과 요청 body를 바꾸면 다음으로 확인합니다. 읽기와 preflight 검증만 하며 리소스를 만들거나 바꾸지 않습니다.
