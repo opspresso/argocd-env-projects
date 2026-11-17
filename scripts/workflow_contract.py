@@ -7,7 +7,10 @@ import re
 import yaml
 
 ENTRYPOINTS = {"app-build-v2": "release", "app-deploy": "deployment", "app-remove": "removal",
-               "app-deploy-eb": "deployment", "app-remove-eb": "removal", "resource-sync": "sync", "env-cleanup": "sweep"}
+               "app-deploy-eb": "deployment", "app-remove-eb": "removal", "app-deploy-vmss": "deployment",
+               "app-remove-vmss": "removal", "resource-sync": "sync", "env-cleanup": "sweep"}
+VMSS = ("app-deploy-vmss", "app-remove-vmss")
+AZURE_TOKEN = {"audience": "api://AzureADTokenExchange", "expirationSeconds": 3600, "path": "azure-identity-token"}
 
 
 def unassigned_variables(script):
@@ -37,7 +40,7 @@ for name, entry in ENTRYPOINTS.items():
     # Agent Runway reads results and logs: Workflows stay 1 day. The build and deploy steps keep every Pod as long,
     # so deployment_logs can return a successful step's output too; resource-sync output is not read.
     assert spec["ttlStrategy"] == {"secondsAfterSuccess": 86400, "secondsAfterFailure": 86400}, name
-    if name in ("app-build-v2", "app-deploy", "app-remove", "app-deploy-eb", "app-remove-eb"):
+    if name in ("app-build-v2", "app-deploy", "app-remove", "app-deploy-eb", "app-remove-eb", *VMSS):
         # Explicit, because the controller's workflowDefaults (OnPodSuccess) apply when podGC is absent.
         assert spec["podGC"] == {"strategy": "OnWorkflowCompletion", "deleteDelayDuration": "24h"}, name
     else:
@@ -49,6 +52,21 @@ for name, entry in ENTRYPOINTS.items():
             # retry a lost Pod.
             assert step.get("metadata", {}).get("annotations", {}).get("karpenter.sh/do-not-disrupt") == "true", f"{name}:{step['name']}"
             assert 'lastRetry.status == "Error"' in step.get("retryStrategy", {}).get("expression", ""), f"{name}:{step['name']}"
+        if name in VMSS and "container" in step:
+            # Entra exchanges only a token of this audience (the federated credential of delivery-target), read from the
+            # file that target.sh azure_login reads. The Workflow passes no Azure credential otherwise.
+            tokens = [source["serviceAccountToken"] for volume in step.get("volumes", []) for source in volume.get("projected", {}).get("sources", [])
+                      if "serviceAccountToken" in source]
+            assert tokens == [AZURE_TOKEN], f"{name}:{step['name']} projected token {tokens}"
+            env = {item["name"]: item for item in step["container"]["env"]}
+            assert env["AZURE_FEDERATED_TOKEN_FILE"]["value"] == "/var/run/secrets/azure/tokens/azure-identity-token", f"{name}:{step['name']}"
+            assert {"name": "azure-identity-token", "mountPath": "/var/run/secrets/azure/tokens", "readOnly": True} in step["container"]["volumeMounts"]
+            assert spec["securityContext"]["fsGroup"] == step["container"]["securityContext"]["runAsGroup"], f"{name} cannot read its token"
+            # No secret value reaches a vmss step: only deploy reads a Kubernetes Secret, the Nexus reader password.
+            secrets = [item["valueFrom"]["secretKeyRef"]["name"] for item in env.values() if "secretKeyRef" in item.get("valueFrom", {})]
+            assert secrets == (["delivery-nexus"] if (name, step["name"]) == ("app-deploy-vmss", "deploy") else []), f"{name}:{step['name']} {secrets}"
+            assert "secretRef" not in yaml.safe_dump(step["container"].get("envFrom", [])), f"{name}:{step['name']}"
+            assert not any("secret" in volume for volume in step.get("volumes", [])), f"{name}:{step['name']} mounts a Secret"
     for step in spec["templates"]:
         for container in [step.get("container")] + step.get("initContainers", []):
             if container and container.get("args"):

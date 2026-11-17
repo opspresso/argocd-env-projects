@@ -45,14 +45,15 @@ data:
     {{- end }}
 ---
 # Scripts of the steps: the values renderer of the deploy step (scripts/test.sh checks charts/app against its
-# output), the resource check of resource-sync, the commit that both use, and the Target helpers, source bundle and
-# stack of the aws-eb Workflows.
+# output), the resource check of resource-sync, the commit that both use, the Target helpers, source bundle and
+# stack of the aws-eb Workflows, and the deploy script, template, instance boot script and Adoptium signing key of the
+# azure-vmss Workflows.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: delivery-scripts
 data:
-{{- range list "render.jq" "check-resources.sh" "commit.sh" "target.sh" "eb-bundle.py" "eb-deploy.py" "eb-stack.yaml" "artifacts.py" "http-health.sh" }}
+{{- range list "render.jq" "check-resources.sh" "commit.sh" "target.sh" "eb-bundle.py" "eb-deploy.py" "eb-stack.yaml" "artifacts.py" "http-health.sh" "vmss-deploy.py" "vmss-app.json" "vmss-boot.sh" "adoptium.asc" }}
   {{ . }}: |
 {{ $.Files.Get (printf "files/%s" .) | indent 4 }}
 {{- end }}

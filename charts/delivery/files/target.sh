@@ -1,7 +1,8 @@
-# Shared by the steps of the VM Target Workflows (app-deploy-eb, app-remove-eb). Source it with `.`.
-# Checks the parameters, reads the Target JSON and assumes the Target's deploy role. The step's ServiceAccount
-# (delivery-target) may assume only roles named agent-runway-target-deploy (terraform-env-demo demo/4-role), and the
-# session tags limit the deploy role to this Project environment's stack.
+# Shared by the steps of the VM Target Workflows (app-deploy-eb, app-remove-eb, app-deploy-vmss, app-remove-vmss). Source
+# it with `.`. Checks the parameters, reads the Target JSON and signs in as the Target's deploy identity. On aws-eb the
+# step's ServiceAccount (delivery-target) may assume only roles named agent-runway-target-deploy (terraform-env-demo
+# demo/4-role), and the session tags limit the deploy role to this Project environment's stack. On azure-vmss Entra
+# trusts the same ServiceAccount for the app agent-runway-target-deploy (terraform-env-azure dmz/8-runway-target).
 # A Target in another AWS account has externalId (agent-platform docs/APP_DELIVERY.md, 외부 계정), which that account's trust
 # policy requires.
 
@@ -85,4 +86,18 @@ install_script() {
   [ $(( $(wc -c < "$1") )) -le 16384 ] || { echo "Target field installScript exceeds 16 KiB"; exit 1; }
   head -n 1 "$1" | grep -qE '^#!/bin/(bash|sh)( .*)?$' \
     || { echo "Target field installScript must start with #!/bin/bash or #!/bin/sh"; exit 1; }
+}
+
+# Signs the az CLI in as the Target's deploy app (target.deployClientId) with the step's projected service-account token
+# (audience api://AzureADTokenExchange, file AZURE_FEDERATED_TOKEN_FILE), then selects the Target's subscription. Entra
+# accepts the token only for apps whose federated credential names system:serviceaccount:app-delivery:delivery-target.
+azure_login() {
+  uuid='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+  for key in tenantId subscriptionId deployClientId; do
+    field "$key" | grep -qE "$uuid" || { echo "Target field $key is not a UUID"; exit 1; }
+  done
+  [ -s "$AZURE_FEDERATED_TOKEN_FILE" ] || { echo "No projected service-account token at $AZURE_FEDERATED_TOKEN_FILE"; exit 1; }
+  az login --service-principal --username "$(field deployClientId)" --tenant "$(field tenantId)" \
+    --federated-token "$(cat "$AZURE_FEDERATED_TOKEN_FILE")" --allow-no-subscriptions --only-show-errors --output none
+  az account set --subscription "$(field subscriptionId)"
 }

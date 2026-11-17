@@ -1,0 +1,188 @@
+# Deploy a verified Nexus JAR to a VM scale set on an azure-vmss Target (agent-platform docs/APP_DELIVERY.md, target).
+# Same parameters, results and DAG task names as app-deploy-eb. The instances read the bundle and the declared secrets
+# with their own identity when they start; no secret value passes through the Workflow, the template or the custom data.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: app-deploy-vmss
+spec:
+  entrypoint: deployment
+  # Shared with app-deploy, app-deploy-eb, app-remove-eb and app-remove-vmss: one change per Project environment at a time.
+  synchronization:
+    mutexes:
+      - name: "deploy-{{workflow.parameters.project}}-{{workflow.parameters.environment}}"
+  serviceAccountName: delivery-target
+  activeDeadlineSeconds: 5400
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 86400
+  podGC:
+    strategy: OnWorkflowCompletion
+    deleteDelayDuration: 24h
+  # The steps run as user 1000; the group makes the projected Azure token readable.
+  securityContext:
+    fsGroup: 1000
+  arguments:
+    parameters:
+      - name: deployment
+      - name: project
+      - name: environment
+      # Native file identity: format, URL, SHA-256 and size.
+      - name: artifact
+      - name: application
+      - name: host
+      # The Target without secrets (JSON): kind azure-vmss, name (the Variables' scope), tenantId, subscriptionId,
+      # location, deployClientId, keyVault, artifactStorage, resourceGroup, subnetId, dnsZoneId, frontDoorProfileId,
+      # javaRuntime; optional installScript (runs on each instance before the app).
+      - name: target
+  templates:
+    - name: deployment
+      dag:
+        tasks:
+          - name: deploy
+            template: deploy
+          - name: verify
+            template: verify
+            depends: deploy
+
+    # Uploads the JAR and its launch settings to the container runway-<project>-<environment>, gives the app identity
+    # read access to them and to its declared secrets, and deploys vmss-app.json and the Front Door route. With the
+    # immutable rollout, new instances (one extra at a time) replace the old ones only after they report healthy, so a
+    # failed Deployment (also a failed install script) leaves the previous Release running. With the all-at-once rollout
+    # of a sandbox environment every instance is replaced at once and the app is down meanwhile. The step waits for the
+    # instances and for Front Door to validate the domain.
+    - name: deploy
+      serviceAccountName: delivery-target
+      activeDeadlineSeconds: 3300
+      # A Pod lost with its node (a Spot reclaim) or ended by a signal runs again; every step is safe to repeat.
+      retryStrategy:
+        limit: 2
+        retryPolicy: Always
+        backoff: {duration: 10s}
+        expression: lastRetry.status == "Error" || lastRetry.exitCode == "143"
+      # Karpenter does not move the Pod to consolidate nodes while the step runs.
+      metadata:
+        annotations:
+          karpenter.sh/do-not-disrupt: "true"
+      container:
+        image: mcr.microsoft.com/azure-cli:2.93.0
+        command: [sh, -euc]
+        args:
+          - |
+            . /etc/delivery-scripts/target.sh
+            require name tenantId subscriptionId location deployClientId keyVault artifactStorage resourceGroup subnetId \
+              dnsZoneId frontDoorProfileId javaRuntime
+            python3 -I /etc/delivery-scripts/artifacts.py download
+            install_script /tmp/install.sh
+            azure_login
+            python3 -I /etc/delivery-scripts/vmss-deploy.py deploy /tmp/application-artifact /tmp/install.sh
+        env:
+          - &id001 {name: PROJECT, value: "{{workflow.parameters.project}}"}
+          - &id002 {name: ENVIRONMENT, value: "{{workflow.parameters.environment}}"}
+          - &id003 {name: DEPLOYMENT, value: "{{workflow.parameters.deployment}}"}
+          - &id004 {name: ARTIFACT, value: "{{workflow.parameters.artifact}}"}
+          - &id005 {name: APPLICATION, value: "{{workflow.parameters.application}}"}
+          - &id006 {name: HOST, value: "{{workflow.parameters.host}}"}
+          - &id007 {name: TARGET, value: "{{workflow.parameters.target}}"}
+          - &id008 {name: TARGET_KIND, value: azure-vmss}
+          - &id009 {name: HOME, value: /tmp}
+          - &id010 {name: AZURE_FEDERATED_TOKEN_FILE, value: /var/run/secrets/azure/tokens/azure-identity-token}
+          - &id011 {name: AZURE_CORE_COLLECT_TELEMETRY, value: "no"}
+          - name: NEXUS_USERNAME
+            value: runway-reader
+          - name: NEXUS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: delivery-nexus
+                key: readerPassword
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: &unprivileged
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        resources: &small
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {memory: 1Gi}
+        volumeMounts: &mounts
+          - {name: scripts, mountPath: /etc/delivery-scripts, readOnly: true}
+          - {name: azure-identity-token, mountPath: /var/run/secrets/azure/tokens, readOnly: true}
+      volumes: &volumes
+        - name: scripts
+          configMap:
+            name: delivery-scripts
+        # The token Entra exchanges for the deploy app's access token (federated credential of delivery-target).
+        - name: azure-identity-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: api://AzureADTokenExchange
+                  expirationSeconds: 3600
+                  path: azure-identity-token
+
+    # Waits until the scale set carries this Deployment and every instance runs its model healthy (10 minutes), then until
+    # the host answers on the health path through Front Door (20 minutes: a new custom domain's managed certificate and
+    # route reach the Front Door edges only some minutes after the domain is validated).
+    - name: verify
+      serviceAccountName: delivery-target
+      activeDeadlineSeconds: 2100
+      # A Pod lost with its node (a Spot reclaim) or ended by a signal runs again; every step is safe to repeat.
+      retryStrategy:
+        limit: 2
+        retryPolicy: Always
+        backoff: {duration: 10s}
+        expression: lastRetry.status == "Error" || lastRetry.exitCode == "143"
+      # Karpenter does not move the Pod to consolidate nodes while the step runs.
+      metadata:
+        annotations:
+          karpenter.sh/do-not-disrupt: "true"
+      container:
+        image: mcr.microsoft.com/azure-cli:2.93.0
+        command: [sh, -euc]
+        args:
+          - |
+            . /etc/delivery-scripts/http-health.sh
+            . /etc/delivery-scripts/target.sh
+            require name tenantId subscriptionId deployClientId keyVault artifactStorage resourceGroup subnetId dnsZoneId \
+              frontDoorProfileId javaRuntime
+            health=$(printf '%s' "$APPLICATION" | jq -r '.runtime.health // "/health"')
+            azure_login
+            python3 -I /etc/delivery-scripts/vmss-deploy.py verify
+            url="https://${HOST}"
+            echo "runway-${PROJECT}-${ENVIRONMENT} runs Deployment ${DEPLOYMENT}. Checking ${url}${health}"
+            deadline=$(( $(date +%s) + 1200 ))
+            until http_healthy "${url}${health}"; do
+              if [ "$(date +%s)" -ge "$deadline" ]; then echo "${url}${health} did not answer with 2xx in 20 minutes"; exit 1; fi
+              sleep 10
+            done
+            printf '%s' "$url" > /tmp/url
+            echo "${url}${health} answered with 2xx"
+        env:
+          - *id001
+          - *id002
+          - *id003
+          - *id004
+          - *id005
+          - *id006
+          - *id007
+          - *id008
+          - *id009
+          - *id010
+          - *id011
+        envFrom:
+          - configMapRef:
+              name: delivery-settings
+        securityContext: *unprivileged
+        resources: *small
+        volumeMounts: *mounts
+      volumes: *volumes
+      outputs:
+        parameters:
+          - name: url
+            globalName: url
+            valueFrom:
+              path: /tmp/url
