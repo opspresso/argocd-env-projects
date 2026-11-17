@@ -46,6 +46,11 @@ Parameters:
     Type: List<AWS::EC2::Subnet::Id>
   LoadBalancerSubnets:
     Type: List<AWS::EC2::Subnet::Id>
+  InstancePublicIp:
+    Type: String
+    Description: true gives each instance a public address (target.sh public_ip).
+    AllowedValues: ["true", "false"]
+    Default: "false"
   CertificateArn:
     Type: String
   HostedZoneId:
@@ -281,7 +286,7 @@ Resources:
         - { Namespace: aws:ec2:vpc, OptionName: Subnets, Value: !Join [",", !Ref InstanceSubnets] }
         - { Namespace: aws:ec2:vpc, OptionName: ELBSubnets, Value: !Join [",", !Ref LoadBalancerSubnets] }
         - { Namespace: aws:ec2:vpc, OptionName: ELBScheme, Value: public }
-        - { Namespace: aws:ec2:vpc, OptionName: AssociatePublicIpAddress, Value: "false" }
+        - { Namespace: aws:ec2:vpc, OptionName: AssociatePublicIpAddress, Value: !Ref InstancePublicIp }
         # HTTPS only; the plain listener is off so no request reaches the app without TLS.
         - { Namespace: aws:elbv2:listener:default, OptionName: ListenerEnabled, Value: "false" }
         - { Namespace: aws:elbv2:listener:443, OptionName: Protocol, Value: HTTPS }

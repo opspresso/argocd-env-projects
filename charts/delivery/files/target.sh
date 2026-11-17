@@ -27,6 +27,14 @@ list() {
     || { echo "Target field $1 must be a non-empty list" >&2; exit 1; }
 }
 
+# Whether the instances get public addresses (the stack's InstancePublicIp): true when the Target puts them in the
+# load balancer's subnets. Those subnets are public and have no NAT, like the default VPC, so an instance reaches AWS
+# services and the image registry only through a public address. Instances in other (private) subnets get none.
+public_ip() {
+  list instanceSubnets >/dev/null && list loadBalancerSubnets >/dev/null || exit 1
+  printf '%s' "$TARGET" | jq -r '(.instanceSubnets | unique) == (.loadBalancerSubnets | unique)'
+}
+
 # Exports the credentials of the Target's deploy role for the rest of the step.
 assume_target() {
   role=$(field deployRole)

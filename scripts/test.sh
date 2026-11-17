@@ -233,6 +233,13 @@ fi
 target_json='{"kind":"aws-eb","name":"prod-eb","region":"ap-northeast-2","instanceSubnets":["subnet-a","subnet-b"],"deployRole":"arn:aws:iam::123456789012:role/agent-runway-target-deploy"}'
 target() { (PROJECT=todo ENVIRONMENT=prod TARGET_KIND=aws-eb TARGET=$1; set -eu; . charts/delivery/files/target.sh; shift; "$@"); }
 expect "target.sh joins a list field" '^subnet-a,subnet-b$' "$(target "$target_json" list instanceSubnets)"
+# Instances in the load balancer's subnets (a VPC without NAT, such as the default VPC) need a public address.
+expect "target.sh gives instances in the load balancer subnets a public address" '^true$' \
+  "$(target '{"kind":"aws-eb","instanceSubnets":["subnet-b","subnet-a"],"loadBalancerSubnets":["subnet-a","subnet-b"]}' public_ip)"
+expect "target.sh keeps instances in private subnets without a public address" '^false$' \
+  "$(target '{"kind":"aws-eb","instanceSubnets":["subnet-p"],"loadBalancerSubnets":["subnet-a","subnet-b"]}' public_ip)"
+fails "target.sh refuses a public address decision without load balancer subnets" "Target field loadBalancerSubnets must be a non-empty list" \
+  target '{"kind":"aws-eb","instanceSubnets":["subnet-a"]}' public_ip
 fails "target.sh refuses another kind" "is not of kind aws-eb" target '{"kind":"aws-eks"}' true
 fails "target.sh refuses a missing field" "Target field vpcId is missing" target "$target_json" require name vpcId
 fails "target.sh refuses another deploy role" "is not an Agent Runway Target deploy role" \
