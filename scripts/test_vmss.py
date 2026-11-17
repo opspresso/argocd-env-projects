@@ -157,6 +157,11 @@ class FakeAzure:
             assert self.container
             self.uploads[args[args.index("--name") + 1]] = Path(args[args.index("--file") + 1]).read_bytes()
             return {}
+        if args[:3] == ("storage", "blob", "list"):
+            return sorted(self.uploads)
+        if args[:3] == ("storage", "blob", "delete"):
+            del self.uploads[args[args.index("--name") + 1]]
+            return None
         if args[:3] == ("deployment", "group", "create"):
             parameters = json.loads(Path(args[args.index("--parameters") + 1][1:]).read_text())
             self.deployed = parameters
@@ -351,6 +356,14 @@ class Deploy(Fixture):
         self.assertIn(autoscale, azure.resources)
         self.deploy(azure)
         self.assertNotIn(autoscale, azure.resources)
+
+    def test_bundles_of_earlier_deployments_go_after_the_rollout(self):
+        azure = FakeAzure()
+        azure.uploads = {"00000000-0000-4000-8000-000000000000/application.jar": b"old",
+                         "00000000-0000-4000-8000-000000000000/runway.json": b"{}"}
+        self.deploy(azure)
+        self.assertEqual(sorted(azure.uploads), ["11111111-1111-4111-8111-111111111111/application.jar",
+                                                 "11111111-1111-4111-8111-111111111111/runway.json"])
 
     def test_verify_needs_this_deployment(self):
         azure = self.deploy(FakeAzure())

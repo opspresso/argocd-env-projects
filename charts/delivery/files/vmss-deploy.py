@@ -552,8 +552,21 @@ def deploy(plan, artifact_file, install, azure, clock=Clock, template=HERE / "vm
         ensure(azure, resource_id, body, clock)
 
     wait_instances(azure, plan, clock, min(deadline, clock.now() + 1500), before)
+    prune_bundles(azure, plan)
     wait_domain(azure, plan, clock, deadline)
     print(f"{plan['name']} runs Deployment {plan['deployment']} behind {plan['host']}", flush=True)
+
+
+def prune_bundles(azure, plan):
+    """Deletes the bundles of earlier Deployments once every instance runs this one. The container then holds only the
+    bundle that new and repaired instances download, and nothing in it expires."""
+    names = azure.az("storage", "blob", "list", "--container-name", plan["container"], "--account-name", plan["storage"],
+                     "--auth-mode", "login", "--query", "[].name") or []
+    for name in names:
+        if not name.startswith(f"{plan['deployment']}/"):
+            azure.az("storage", "blob", "delete", "--container-name", plan["container"], "--account-name", plan["storage"],
+                     "--name", name, "--auth-mode", "login")
+            print(f"Deleted bundle {name} of an earlier Deployment", flush=True)
 
 
 def tags(plan):
