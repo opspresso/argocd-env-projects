@@ -81,7 +81,7 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
 - The VM Target steps read the instance type and counts only from `application.environment` (`instanceType`,
   `replicas`, `maxReplicas`); Agent Runway resolves the Project's size into them (agent-platform
   `docs/APP_DELIVERY.md#크기`). The optional `application.environment.rollout` chooses the Elastic Beanstalk deployment policy: `immutable`
-  (the default) or `all-at-once`, which Agent Runway sends only for a sandbox environment. The optional `target.externalId` (`docs/APP_DELIVERY.md#외부-계정`) goes to every `aws sts assume-role` of `target.sh`. The optional
+  (the default) or `all-at-once`, which Agent Runway sends only for a sandbox environment. The optional `target.externalId` (`docs/APP_DELIVERY.md#계정`) goes to every `aws sts assume-role` of `target.sh`. The optional
   `target.installScript` (`docs/APP_DELIVERY.md#설치-스크립트`) runs on each instance before the app, as the prebuild hook `00-install.sh` of the EB
   bundle. A non-zero exit fails the Deployment.
 
