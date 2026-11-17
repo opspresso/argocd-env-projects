@@ -48,7 +48,7 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   `kubernetes.io/arch`; `amd64` also tolerates the amd64 NodePool taint `opspresso.com/arch=amd64:NoSchedule`. Another value
   fails the deploy step. Without the value the Pods have no scheduling constraint.
 - The app chart renders only the kinds that AppProject `projects` allows. Adding a kind needs a change there too.
-- `charts/delivery/files/{app-build-v2,app-deploy,app-remove,app-deploy-eb,app-remove-eb,resource-sync,env-cleanup}.yaml` are static. Argo's `{{...}}` parameters must not
+- `charts/delivery/files/{app-build-v2,app-deploy,app-remove,app-deploy-eb,app-remove-eb,app-deploy-vmss,app-remove-vmss,resource-sync,env-cleanup}.yaml` are static. Argo's `{{...}}` parameters must not
   pass through Helm; cluster values reach the steps through ConfigMap `delivery-settings`, and the shared scripts
   (`render.jq`, `check-resources.sh`, `commit.sh`) through ConfigMap `delivery-scripts`.
 - Keep the WorkflowTemplate names, parameters, results and DAG task names of the Workflow contract in
@@ -68,6 +68,16 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   Agent Runway and the Target. Secret values never enter the bundle, the stack or the Workflow: Elastic Beanstalk resolves their SSM ARN references through the instance role when the app starts.
   The instances get public addresses only when the Target puts them in its load balancer subnets (`target.sh` `public_ip`):
   those subnets are public and have no NAT, as in the default VPC. Instances in other (private) subnets get none.
+- `app-deploy-vmss` and `app-remove-vmss` deploy to and remove from an `azure-vmss` Target with the same parameters,
+  results and DAG task names as the eb pair. Their steps run as `delivery-target` and sign in to Entra as
+  `target.deployClientId` with a projected service-account token of audience `api://AzureADTokenExchange`
+  (`target.sh` `azure_login`); `scripts/workflow_contract.py` checks the token volume. `vmss-deploy.py` and `vmss-app.json`
+  take every value from Agent Runway and the Target. The steps read only the names and metadata of Key Vault secrets
+  (`ar-<sha256 of the Variable path>`); the instances read the values with their own user-assigned identity, which gets
+  `Key Vault Secrets User` per declared secret and `Storage Blob Data Reader` on its bundle container only. Secret
+  values never enter the bundle, the template parameters, the custom data or the Workflow. The instances accept port 80
+  only from this Target's Front Door profile (`X-Azure-FDID`) and the load balancer probe. Front Door and DNS changes go
+  through direct ARM requests, because the deploy identity holds no deployment permission in those resource groups.
 - The VM Target steps read the instance type and counts only from `application.environment` (`instanceType`,
   `replicas`, `maxReplicas`); Agent Runway resolves the Project's size into them (agent-platform
   `docs/APP_DELIVERY.md#크기`). The optional `application.environment.rollout` chooses the Elastic Beanstalk deployment policy: `immutable`

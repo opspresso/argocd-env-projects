@@ -12,6 +12,7 @@ helm dependency build charts/app >/dev/null
 python3 scripts/test_native_artifacts.py
 python3 scripts/test_http_health.py
 python3 scripts/test_eb_isolation.py
+python3 scripts/test_vmss.py
 # A workload values file without a host.
 hostless=$(mktemp); trap 'rm -f "$hostless"' EXIT
 
@@ -149,7 +150,7 @@ done
 delivery=$(helm template delivery charts/delivery --namespace app-delivery \
   --set registry=nexus.example/runway-images --set artifactRepository=https://nexus.example/repository/runway-artifacts \
   --set 'apiServer.cidrs={172.20.0.1/32,10.10.114.40/32}')
-for name in app-build-v2 app-deploy app-remove app-deploy-eb app-remove-eb resource-sync env-cleanup; do
+for name in app-build-v2 app-deploy app-remove app-deploy-eb app-remove-eb app-deploy-vmss app-remove-vmss resource-sync env-cleanup; do
   expect "delivery renders WorkflowTemplate $name" "^  name: ${name}$" "$delivery"
 done
 runway_rules=$(yq 'select(.kind == "Role" and .metadata.name == "agent-runway") | .rules[] | (.resources | join(",")) + " " + (.verbs | join(","))' <<<"$delivery" | paste -sd '|' -)
@@ -218,11 +219,23 @@ expect "app-deploy-eb takes the native artifact and Target" '^deployment project
 expect "app-deploy-eb returns url" '^url$' "$(line app-deploy-eb outputs)"
 expect "app-remove-eb keeps app-remove's step names" '^remove verify$' "$(line app-remove-eb tasks)"
 expect "app-remove-eb takes app-remove's parameters and the Target" '^deployment project environment target$' "$(line app-remove-eb parameters)"
-for name in app-deploy-eb app-remove-eb; do
+expect "app-deploy-vmss keeps app-deploy-eb's step names" '^deploy verify$' "$(line app-deploy-vmss tasks)"
+expect "app-deploy-vmss takes app-deploy-eb's parameters" '^deployment project environment artifact application host target$' "$(line app-deploy-vmss parameters)"
+expect "app-deploy-vmss returns url" '^url$' "$(line app-deploy-vmss outputs)"
+expect "app-remove-vmss keeps app-remove-eb's step names" '^remove verify$' "$(line app-remove-vmss tasks)"
+expect "app-remove-vmss takes app-remove-eb's parameters" '^deployment project environment target$' "$(line app-remove-vmss parameters)"
+for name in app-deploy-eb app-remove-eb app-deploy-vmss app-remove-vmss; do
   expect "$name shares the environment mutex" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line $name mutexes)"
 done
-expect "VM Target steps act as delivery-target" '^app-deploy-eb:deploy app-deploy-eb:verify app-remove-eb:remove app-remove-eb:verify$' "$(line all delivery-target)"
+expect "VM Target steps act as delivery-target" '^app-deploy-eb:deploy app-deploy-eb:verify app-remove-eb:remove app-remove-eb:verify app-deploy-vmss:deploy app-deploy-vmss:verify app-remove-vmss:remove app-remove-vmss:verify$' "$(line all delivery-target)"
 expect "app-deploy-eb verifies the native artifact before bundling" 'artifacts.py download' "$(cat charts/delivery/files/app-deploy-eb.yaml)"
+expect "app-deploy-vmss verifies the native artifact before uploading" 'artifacts.py download' "$(cat charts/delivery/files/app-deploy-vmss.yaml)"
+scripts_cm=$(yq 'select(.kind == "ConfigMap" and .metadata.name == "delivery-scripts") | .data | keys | join(" ")' <<<"$delivery")
+for file in vmss-deploy.py vmss-app.json vmss-boot.sh adoptium.asc; do
+  expect "delivery-scripts carries $file" "(^| )${file//./\\.}( |$)" "$scripts_cm"
+done
+if jq -e '.resources | length == 4' charts/delivery/files/vmss-app.json >/dev/null; then pass "vmss-app.json is an ARM template of four resources"; else fail "vmss-app.json is an ARM template of four resources"; fi
+expect "the vmss custom data parameter is secure" '^securestring$' "$(jq -r '.parameters.customData.type' charts/delivery/files/vmss-app.json)"
 if command -v cfn-lint >/dev/null; then
   if cfn-lint charts/delivery/files/eb-stack.yaml; then pass "cfn-lint accepts the aws-eb stack"; else fail "cfn-lint accepts the aws-eb stack"; fi
 else
@@ -265,6 +278,21 @@ fails "assume_target refuses a one-character externalId" "is not an external ID"
   target "${target_json/\"region\"/\"externalId\":\"a\",\"region\"}" assume_target test
 fails "assume_target refuses an externalId that is not a string" "is not an external ID" \
   target "${target_json/\"region\"/\"externalId\":12345,\"region\"}" assume_target test
+# azure_login signs in as the Target's deploy app with the projected token, then selects the Target's subscription.
+cat > "$sts_dir/bin/az" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$@" >> "$STS_DIR/args"
+STUB
+chmod +x "$sts_dir/bin/az"
+printf 'projected-token' > "$sts_dir/token"
+azure_json='{"kind":"azure-vmss","tenantId":"b84c843a-4ece-4ef7-8788-372e1f232c0a","subscriptionId":"ce097188-9b76-44f9-8bbd-366ae73ade04","deployClientId":"9d46ecbc-80b8-467f-8e8c-85bd727d274f"}'
+azure() { (PROJECT=todo ENVIRONMENT=prod TARGET_KIND=azure-vmss TARGET=$1 AZURE_FEDERATED_TOKEN_FILE=${2:-$sts_dir/token}; set -eu; . charts/delivery/files/target.sh; azure_login); }
+login_args=$(sts azure "$azure_json" | paste -sd ' ' -)
+expect "azure_login signs in with the deploy app and the projected token" '^login --service-principal --username 9d46ecbc-80b8-467f-8e8c-85bd727d274f --tenant b84c843a-4ece-4ef7-8788-372e1f232c0a --federated-token projected-token ' "$login_args"
+expect "azure_login selects the Target's subscription" ' account set --subscription ce097188-9b76-44f9-8bbd-366ae73ade04$' "$login_args"
+fails "azure_login refuses a client ID that is not a UUID" "deployClientId is not a UUID" azure "${azure_json/9d46ecbc-80b8-467f-8e8c-85bd727d274f/x}"
+fails "azure_login refuses a missing token file" "No projected service-account token" azure "$azure_json" "$sts_dir/missing"
+fails "target.sh refuses an aws-eb Target in an azure-vmss step" "is not of kind azure-vmss" azure "$target_json"
 rm -rf "$sts_dir"
 
 # The instance type comes only from application.environment.instanceType (Agent Runway resolves the Project's size).
@@ -439,7 +467,7 @@ fails "a manifest that is not YAML is refused" "" check <<<"kind: [unclosed"
 
 if command -v argo >/dev/null; then
   # One run: resource-sync and app-remove reference env-cleanup templates.
-  if argo lint --offline charts/delivery/files/{app-build-v2,app-deploy,app-remove,app-deploy-eb,app-remove-eb,resource-sync,env-cleanup}.yaml >/dev/null; then
+  if argo lint --offline charts/delivery/files/{app-build-v2,app-deploy,app-remove,app-deploy-eb,app-remove-eb,app-deploy-vmss,app-remove-vmss,resource-sync,env-cleanup}.yaml >/dev/null; then
     pass "argo lint accepts the WorkflowTemplates"; else fail "argo lint accepts the WorkflowTemplates"; fi
 else
   echo "skip argo lint (argo CLI not installed)"

@@ -1,0 +1,218 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "One Project environment on an azure-vmss Target (agent-platform docs/APP_DELIVERY.md, target): the public IP, the load balancer, the VM scale set and its autoscale setting runway-<project>-<environment>. The app-deploy-vmss Workflow (vmss-deploy.py) deploys it to target.resourceGroup after it created the app identity; app-remove-vmss deletes the resources. Every value comes from Agent Runway and the Target, never from the app repository, and no parameter holds a secret value."
+  },
+  "parameters": {
+    "name": {"type": "string", "minLength": 11, "maxLength": 52, "metadata": {"description": "runway-<project>-<environment>"}},
+    "location": {"type": "string"},
+    "project": {"type": "string"},
+    "environment": {"type": "string"},
+    "deployment": {"type": "string", "metadata": {"description": "The Agent Runway Deployment that last changed the scale set (tag opspresso.com/delivery-deployment)."}},
+    "identityId": {"type": "string", "metadata": {"description": "The user-assigned identity runway-<project>-<environment>: it reads the bundle and the declared secrets."}},
+    "subnetId": {"type": "string"},
+    "vmSize": {"type": "string"},
+    "architecture": {"type": "string", "allowedValues": ["amd64", "arm64"]},
+    "replicas": {"type": "int", "minValue": 1, "maxValue": 10},
+    "maxReplicas": {"type": "int", "minValue": 1, "maxValue": 10},
+    "rollout": {"type": "string", "allowedValues": ["immutable", "all-at-once"]},
+    "healthPath": {"type": "string"},
+    "customData": {"type": "securestring", "metadata": {"description": "The base64 boot script (vmss-boot.sh). It names the bundle, the identity and the secrets; it holds no secret value. Secure so the deployment history does not keep the install script."}}
+  },
+  "variables": {
+    "tags": {
+      "opspresso.com/delivery-project": "[parameters('project')]",
+      "opspresso.com/delivery-env": "[parameters('environment')]"
+    },
+    "lbId": "[resourceId('Microsoft.Network/loadBalancers', parameters('name'))]",
+    "frontendId": "[concat(variables('lbId'), '/frontendIPConfigurations/public')]",
+    "poolId": "[concat(variables('lbId'), '/backendAddressPools/app')]",
+    "probeId": "[concat(variables('lbId'), '/probes/health')]",
+    "image": {
+      "publisher": "Canonical",
+      "offer": "ubuntu-24_04-lts",
+      "sku": "[if(equals(parameters('architecture'), 'arm64'), 'server-arm64', 'server')]",
+      "version": "latest"
+    },
+    "rolling": {
+      "maxBatchInstancePercent": 20,
+      "maxUnhealthyInstancePercent": 100,
+      "maxUnhealthyUpgradedInstancePercent": 0,
+      "pauseTimeBetweenBatches": "PT0S",
+      "prioritizeUnhealthyInstances": true,
+      "maxSurge": true
+    },
+    "sshKey": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQClDV8SypiD1CTDk7z6Q4q/qddFIP0WiXk1w+z0jlcYfdTJQDcr+Va+Kp3fPEQEAMuYp74QuY7JyP1CbepwJoYjQKmKChK2c8D7NcevGUODNGcERy1HgJnXEyDpMnHcCmGLH+8K7nC9ZliVZ35tz9Kmy2dYTEtDY59glMZtvGywKhgKBipZZwnBvd5oAYySXoWZvpWP1P8/hbQhc9O/NxjcnPsq6a1rfCqxfTkFhymeQn1yYY7oxOvq1nQeUvt8mEnIsWVnNJFOpNv5YJYKRsiU+SVSZlZA2HApxR3HqMe6uc+X0i/38K/qL0Q3QUm+4TkzK4e81WnXPZOBB12Hd9EDOr1DfI+XM3rv58fSsDZCcJlW4vI20HNdVRlg4v4ID7xr+xxLphIFk2zqptIp9eadl3D2jSvkoC2jHsRfOPUaNJGjTxwU3kclA0wckp8JzbWyrCfnz1zIRAe6+qPLgxP0aBcwAPuByPW0RrMUZDmwbTdonRBDtejzevnsz/+2S6M="
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2024-05-01",
+      "name": "[parameters('name')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {"name": "Standard", "tier": "Regional"},
+      "properties": {"publicIPAllocationMethod": "Static", "publicIPAddressVersion": "IPv4", "idleTimeoutInMinutes": 4}
+    },
+    {
+      "type": "Microsoft.Network/loadBalancers",
+      "apiVersion": "2024-05-01",
+      "name": "[parameters('name')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {"name": "Standard", "tier": "Regional"},
+      "dependsOn": ["[resourceId('Microsoft.Network/publicIPAddresses', parameters('name'))]"],
+      "properties": {
+        "frontendIPConfigurations": [
+          {"name": "public", "properties": {"publicIPAddress": {"id": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('name'))]"}}}
+        ],
+        "backendAddressPools": [{"name": "app"}],
+        "probes": [
+          {
+            "name": "health",
+            "properties": {"protocol": "Http", "port": 80, "requestPath": "[parameters('healthPath')]", "intervalInSeconds": 5, "probeThreshold": 2}
+          }
+        ],
+        "loadBalancingRules": [
+          {
+            "name": "http",
+            "properties": {
+              "frontendIPConfiguration": {"id": "[variables('frontendId')]"},
+              "backendAddressPool": {"id": "[variables('poolId')]"},
+              "probe": {"id": "[variables('probeId')]"},
+              "protocol": "Tcp",
+              "frontendPort": 80,
+              "backendPort": 80,
+              "idleTimeoutInMinutes": 4,
+              "enableTcpReset": true,
+              "disableOutboundSnat": true
+            }
+          }
+        ],
+        "outboundRules": [
+          {
+            "name": "outbound",
+            "properties": {
+              "frontendIPConfigurations": [{"id": "[variables('frontendId')]"}],
+              "backendAddressPool": {"id": "[variables('poolId')]"},
+              "protocol": "All",
+              "allocatedOutboundPorts": 0,
+              "idleTimeoutInMinutes": 4,
+              "enableTcpReset": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachineScaleSets",
+      "apiVersion": "2024-07-01",
+      "name": "[parameters('name')]",
+      "location": "[parameters('location')]",
+      "tags": "[union(variables('tags'), createObject('opspresso.com/delivery-deployment', parameters('deployment')))]",
+      "dependsOn": ["[variables('lbId')]"],
+      "sku": {"name": "[parameters('vmSize')]", "tier": "Standard", "capacity": "[parameters('replicas')]"},
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {"[parameters('identityId')]": {}}
+      },
+      "properties": {
+        "orchestrationMode": "Uniform",
+        "overprovision": false,
+        "singlePlacementGroup": true,
+        "upgradePolicy": "[if(equals(parameters('rollout'), 'immutable'), createObject('mode', 'Rolling', 'rollingUpgradePolicy', variables('rolling')), createObject('mode', 'Manual'))]",
+        "virtualMachineProfile": {
+          "storageProfile": {
+            "imageReference": "[variables('image')]",
+            "osDisk": {"createOption": "FromImage", "caching": "ReadWrite", "managedDisk": {"storageAccountType": "StandardSSD_LRS"}}
+          },
+          "osProfile": {
+            "computerNamePrefix": "runway",
+            "adminUsername": "runway-admin",
+            "customData": "[parameters('customData')]",
+            "linuxConfiguration": {
+              "disablePasswordAuthentication": true,
+              "provisionVMAgent": true,
+              "ssh": {"publicKeys": [{"path": "/home/runway-admin/.ssh/authorized_keys", "keyData": "[variables('sshKey')]"}]}
+            }
+          },
+          "securityProfile": "[if(equals(parameters('architecture'), 'amd64'), createObject('securityType', 'TrustedLaunch', 'uefiSettings', createObject('secureBootEnabled', true(), 'vTpmEnabled', true())), null())]",
+          "networkProfile": {
+            "networkInterfaceConfigurations": [
+              {
+                "name": "app",
+                "properties": {
+                  "primary": true,
+                  "ipConfigurations": [
+                    {
+                      "name": "app",
+                      "properties": {
+                        "primary": true,
+                        "subnet": {"id": "[parameters('subnetId')]"},
+                        "loadBalancerBackendAddressPools": [{"id": "[variables('poolId')]"}]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "extensionProfile": {
+            "extensions": [
+              {
+                "name": "health",
+                "properties": {
+                  "publisher": "Microsoft.ManagedServices",
+                  "type": "ApplicationHealthLinux",
+                  "typeHandlerVersion": "2.0",
+                  "autoUpgradeMinorVersion": true,
+                  "settings": {"protocol": "http", "port": 61000, "requestPath": "/runway-health", "intervalInSeconds": 5, "numberOfProbes": 2, "gracePeriod": 1200}
+                }
+              }
+            ]
+          },
+          "diagnosticsProfile": {"bootDiagnostics": {"enabled": true}}
+        }
+      }
+    },
+    {
+      "condition": "[greater(parameters('maxReplicas'), parameters('replicas'))]",
+      "type": "Microsoft.Insights/autoscalesettings",
+      "apiVersion": "2022-10-01",
+      "name": "[parameters('name')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "dependsOn": ["[resourceId('Microsoft.Compute/virtualMachineScaleSets', parameters('name'))]"],
+      "properties": {
+        "enabled": true,
+        "targetResourceUri": "[resourceId('Microsoft.Compute/virtualMachineScaleSets', parameters('name'))]",
+        "profiles": [
+          {
+            "name": "cpu",
+            "capacity": {"minimum": "[string(parameters('replicas'))]", "maximum": "[string(parameters('maxReplicas'))]", "default": "[string(parameters('replicas'))]"},
+            "rules": [
+              {
+                "metricTrigger": {
+                  "metricName": "Percentage CPU", "metricResourceUri": "[resourceId('Microsoft.Compute/virtualMachineScaleSets', parameters('name'))]",
+                  "timeGrain": "PT1M", "statistic": "Average", "timeWindow": "PT10M", "timeAggregation": "Average", "operator": "GreaterThan", "threshold": 70
+                },
+                "scaleAction": {"direction": "Increase", "type": "ChangeCount", "value": "1", "cooldown": "PT10M"}
+              },
+              {
+                "metricTrigger": {
+                  "metricName": "Percentage CPU", "metricResourceUri": "[resourceId('Microsoft.Compute/virtualMachineScaleSets', parameters('name'))]",
+                  "timeGrain": "PT1M", "statistic": "Average", "timeWindow": "PT10M", "timeAggregation": "Average", "operator": "LessThan", "threshold": 30
+                },
+                "scaleAction": {"direction": "Decrease", "type": "ChangeCount", "value": "1", "cooldown": "PT10M"}
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "publicIp": {"type": "string", "value": "[reference(resourceId('Microsoft.Network/publicIPAddresses', parameters('name')), '2024-05-01').ipAddress]"}
+  }
+}
