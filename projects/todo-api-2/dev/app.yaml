@@ -1,5 +1,5 @@
-# Written by the app-deploy workflow for Deployment 0992d67d-a878-4059-8b0a-bed9aec4d658. Do not edit.
-deployment: 0992d67d-a878-4059-8b0a-bed9aec4d658
+# Written by the app-deploy workflow for Deployment 4368d45b-6706-4668-acfc-cbdadc4e2491. Do not edit.
+deployment: 4368d45b-6706-4668-acfc-cbdadc4e2491
 app:
   controller:
     enabled: true
@@ -73,7 +73,7 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: 0992d67d-a878-4059-8b0a-bed9aec4d658
+      force-sync: 4368d45b-6706-4668-acfc-cbdadc4e2491
   configmap:
     enabled: true
     data:
@@ -81,7 +81,11 @@ app:
       DB_PGHOST: postgres.delivery-pool.svc.cluster.local
       DB_PGPORT: "5432"
       DB_PGUSER: delivery_622afc768af34a1b8d590b5eb2e271ad
+      PGDATABASE: delivery_9dec04d4207c44ffb62a5021cc4f2683
+      PGHOST: postgres.delivery-pool.svc.cluster.local
+      PGPORT: "5432"
+      PGUSER: delivery_9dec04d4207c44ffb62a5021cc4f2683
   podAnnotations:
-    opspresso.com/deployment: 0992d67d-a878-4059-8b0a-bed9aec4d658
+    opspresso.com/deployment: 4368d45b-6706-4668-acfc-cbdadc4e2491
   nodeSelector:
     kubernetes.io/arch: arm64
