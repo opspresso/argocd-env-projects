@@ -12,7 +12,7 @@ spec:
     mutexes:
       - name: "deploy-{{workflow.parameters.project}}-{{workflow.parameters.environment}}"
   serviceAccountName: delivery-target
-  activeDeadlineSeconds: 7200
+  activeDeadlineSeconds: 9000
   ttlStrategy:
     secondsAfterSuccess: 86400
     secondsAfterFailure: 86400
@@ -125,12 +125,12 @@ spec:
                   path: azure-identity-token
 
     # Waits until the scale set carries this Deployment and every instance runs its model healthy (10 minutes), then until
-    # the host answers on the health path through Front Door (45 minutes: a new custom domain's managed certificate and
-    # route reach the Front Door edges only some minutes after the domain is validated; a host made again after its removal
-    # took 21 minutes on eks-demo dmz).
+    # the host answers on the health path through Front Door (60 minutes). Front Door issues a managed certificate for each
+    # new custom domain, also for a host made again after its removal, and deploys it to the edges "from several minutes
+    # to an hour" after the domain is associated (Microsoft Learn). On eks-demo dmz this took 21 minutes after validation.
     - name: verify
       serviceAccountName: delivery-target
-      activeDeadlineSeconds: 3600
+      activeDeadlineSeconds: 4500
       # A Pod lost with its node (a Spot reclaim) or ended by a signal runs again; every step is safe to repeat.
       retryStrategy:
         limit: 2
@@ -155,9 +155,9 @@ spec:
             python3 -I /etc/delivery-scripts/vmss-deploy.py verify
             url="https://${HOST}"
             echo "runway-${PROJECT}-${ENVIRONMENT} runs Deployment ${DEPLOYMENT}. Checking ${url}${health}"
-            deadline=$(( $(date +%s) + 2700 ))
+            deadline=$(( $(date +%s) + 3600 ))
             until http_healthy "${url}${health}"; do
-              if [ "$(date +%s)" -ge "$deadline" ]; then echo "${url}${health} did not answer with 2xx in 45 minutes"; exit 1; fi
+              if [ "$(date +%s)" -ge "$deadline" ]; then echo "${url}${health} did not answer with 2xx in 60 minutes"; exit 1; fi
               sleep 10
             done
             printf '%s' "$url" > /tmp/url
