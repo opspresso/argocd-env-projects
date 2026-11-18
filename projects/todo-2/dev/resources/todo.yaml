@@ -1,0 +1,17 @@
+# Written by the resource-sync workflow for Sync f483d1bf-cda6-4bfb-8384-44867b6beb11. Do not edit.
+passwordSecret:
+  name: app-env
+  key: TODO_VALKEY_PASSWORD
+persistence:
+  storageGiB: 1
+maxMemoryMiB: 128
+peer:
+  enabled: true
+  namespace: agent-forge-workspaces
+  podLabels:
+    app.kubernetes.io/name: agent-forge-sandbox
+    forge.opspresso.com/project: todo-2
+chart: valkey
+chartVersion: 1.1.0
+resourceName: todo
+resourceId: 86dd50c9ff4c49f6aadb9cd42313d422
