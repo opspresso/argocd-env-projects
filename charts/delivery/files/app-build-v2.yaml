@@ -7,7 +7,8 @@ metadata:
 spec:
   entrypoint: release
   serviceAccountName: delivery-runner
-  activeDeadlineSeconds: 3600
+  # A large build (for example Elasticsearch, 40 to 90 minutes) must finish once more after a Spot reclaim.
+  activeDeadlineSeconds: 10800
   ttlStrategy:
     secondsAfterSuccess: 86400
     secondsAfterFailure: 86400
@@ -105,7 +106,7 @@ spec:
                   value: '{{tasks.check-application.outputs.parameters.arch}}'
     - name: checkout
       serviceAccountName: delivery-source
-      activeDeadlineSeconds: 300
+      activeDeadlineSeconds: 600
       retryStrategy: &reclaimed
         limit: 2
         retryPolicy: Always
@@ -228,9 +229,12 @@ spec:
       automountServiceAccountToken: false
       executor:
         serviceAccountName: delivery-runner
-      metadata:
+      # Karpenter does not move a Pod that runs app code to consolidate nodes; the step would start again.
+      metadata: &runner
         labels:
           opspresso.com/delivery-role: runner
+        annotations:
+          karpenter.sh/do-not-disrupt: "true"
       container:
         image: "{{inputs.parameters.image}}"
         command:
@@ -262,7 +266,7 @@ spec:
           value: 'true'
           effect: NoSchedule
     - name: build
-      activeDeadlineSeconds: 2400
+      activeDeadlineSeconds: 7200
       retryStrategy: *reclaimed
       inputs:
         parameters:
@@ -270,11 +274,12 @@ spec:
       automountServiceAccountToken: false
       executor:
         serviceAccountName: delivery-runner
-      metadata:
-        labels:
-          opspresso.com/delivery-role: runner
+      metadata: *runner
+      # Only the build NodePools delivery-amd64 and delivery-arm64 (terraform-env-opsp demo/7-eks-shared) have a disk
+      # for a large build (200Gi). delivery-arm64 nodes have 8 CPUs and 32Gi or more.
       nodeSelector:
         kubernetes.io/arch: "{{inputs.parameters.arch}}"
+        karpenter.sh/nodepool: "delivery-{{inputs.parameters.arch}}"
       tolerations:
         - {key: opspresso.com/delivery-build, operator: Equal, value: "true", effect: NoSchedule}
       container:
@@ -288,7 +293,10 @@ spec:
             dockerfile=$(realpath "$context/$(cat /work/dockerfile)")
             case "$dockerfile" in /work/src/*) ;; *) echo "Dockerfile leaves source"; exit 1;; esac
             rm -f /work/image.tar
-            /kaniko/executor --context "dir://$context" --dockerfile "$dockerfile" --custom-platform "linux/${ARCH}"   --destination "build.local/app:${RELEASE}" --no-push --tar-path /work/image.tar --snapshot-mode redo
+            # --cleanup deletes the build filesystem and kaniko's layer files when the build ends (also on failure). The
+            # Pod stays a day for its logs, and its container layer would keep that disk on the node until then.
+            # Mounted volumes such as /work stay.
+            /kaniko/executor --context "dir://$context" --dockerfile "$dockerfile" --custom-platform "linux/${ARCH}"   --destination "build.local/app:${RELEASE}" --no-push --tar-path /work/image.tar --snapshot-mode redo --cleanup
         env:
           - {name: ARCH, value: "{{inputs.parameters.arch}}"}
           - name: RELEASE
@@ -296,9 +304,12 @@ spec:
         securityContext:
           runAsUser: 0
           allowPrivilegeEscalation: false
+        # kaniko runs every RUN of the Dockerfile in this container: the build's processes and files count here. The
+        # requests keep a small build cheap. The limits hold a large build (12Gi of memory and 30 to 60Gi of files and
+        # layer snapshots) with room to spare. The kubelet evicts the Pod above the disk limit.
         resources:
-          requests: {cpu: "1", memory: 2Gi}
-          limits: {memory: 6Gi}
+          requests: {cpu: "1", memory: 2Gi, ephemeral-storage: 20Gi}
+          limits: {memory: 24Gi, ephemeral-storage: 150Gi}
         volumeMounts:
           - {name: work, mountPath: /work}
 
@@ -313,9 +324,7 @@ spec:
       automountServiceAccountToken: false
       executor:
         serviceAccountName: delivery-runner
-      metadata:
-        labels:
-          opspresso.com/delivery-role: runner
+      metadata: *runner
       inputs:
         parameters:
           - name: arch

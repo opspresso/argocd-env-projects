@@ -108,6 +108,12 @@ python3 scripts/vmss_validate.py <target JSON 파일> [<VM size> <architecture>]
 python3 scripts/vmss_boot_check.py [amd64|arm64]                               # Docker 필요, Ubuntu 24.04에서 vmss-boot.sh 실행
 ```
 
+`build` 단계는 그 architecture의 build NodePool `delivery-amd64`·`delivery-arm64`(terraform-env-opsp `demo/7-eks-shared`, 노드 디스크 200Gi)에서만 실행합니다.
+kaniko는 Dockerfile의 `RUN`을 같은 컨테이너에서 실행하므로 빌드의 메모리와 파일이 모두 이 컨테이너의 자원입니다.
+요청은 CPU 1개·메모리 2Gi·디스크 20Gi이고, 한도는 메모리 24Gi·디스크 150Gi입니다. 메모리 한도를 넘으면 OOM으로, 디스크 한도를 넘으면 kubelet eviction으로 실패하며 다시 실행하지 않습니다.
+`build`는 최대 2시간, Workflow 전체는 최대 3시간입니다. kaniko `--cleanup`이 빌드가 끝나면(실패해도) 빌드 파일을 지워, 로그 때문에 1일 남는 Pod가 노드 디스크를 차지하지 않습니다.
+`test`·`build`·`build-artifact` Pod에는 `karpenter.sh/do-not-disrupt: "true"`가 있어 Karpenter가 통합(consolidation)을 위해 옮기지 않습니다.
+
 빌드 노드는 Spot일 수 있습니다. Pod 유실·SIGTERM에 한해 최대 2번 재개합니다. 앱 명령의 실패는 다시 실행하지 않습니다. 게시 재개는 기존 산출물의 digest·해시를 확인하며 다른 바이트로 덮어쓰지 않습니다. 자격 증명을 source volume에 남기지 않습니다.
 
 `resource-sync`는 `resources-<slug>-<env>`, `app-deploy`와 `app-remove`는 같은 `deploy-<slug>-<env>` mutex를 잡습니다.
