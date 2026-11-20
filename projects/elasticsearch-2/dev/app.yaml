@@ -1,0 +1,103 @@
+# Written by the app-deploy workflow for Deployment 6e76ef20-dc73-49b4-8656-decef3687cb1. Do not edit.
+deployment: 6e76ef20-dc73-49b4-8656-decef3687cb1
+app:
+  controller:
+    enabled: true
+  image:
+    reference: nexus.demo.opsp.dev/runway-images/elasticsearch-2@sha256:49130283a1cd343753b8efe5db8b7f1b1d5fc2048cc732f9f8bdfe4436274e45
+  imagePullSecrets:
+    - name: nexus-reader
+  raw:
+    resources:
+      - apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: nexus-reader
+          annotations:
+            argocd.argoproj.io/sync-wave: "-1"
+        spec:
+          refreshInterval: 1h
+          secretStoreRef:
+            kind: SecretStore
+            name: agent-runway
+          target:
+            name: nexus-reader
+            template:
+              type: kubernetes.io/dockerconfigjson
+              engineVersion: v2
+              data:
+                .dockerconfigjson: '{"auths":{"nexus.demo.opsp.dev":{"auth":"{{ printf "runway-reader:%s" .password | b64enc }}"}}}'
+          data:
+            - secretKey: password
+              remoteRef:
+                key: /k8s/common/nexus/runway-reader-password
+  replicaCount: 1
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 2
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 70
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 9200
+  routing:
+    hosts:
+      - elasticsearch-2-dev.apps.rovr.dev
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "9200"
+  startupProbe:
+    httpGet:
+      path: /
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      memory: 2Gi
+  externalSecrets:
+    annotations:
+      force-sync: 6e76ef20-dc73-49b4-8656-decef3687cb1
+  configmap:
+    enabled: false
+  podAnnotations:
+    opspresso.com/deployment: 6e76ef20-dc73-49b4-8656-decef3687cb1
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: app
+  nodeSelector:
+    kubernetes.io/arch: arm64
+  resourceQuota:
+    hard:
+      requests.cpu: 4000m
+      requests.memory: 8192Mi
+      limits.memory: 8192Mi
