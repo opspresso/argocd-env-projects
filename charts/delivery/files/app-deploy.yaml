@@ -52,6 +52,10 @@ spec:
     - name: deploy
       serviceAccountName: delivery-git
       activeDeadlineSeconds: 300
+      # Karpenter does not move the Pod to consolidate nodes while the step runs: a deleted Pod fails the step.
+      metadata: &stay
+        annotations:
+          karpenter.sh/do-not-disrupt: "true"
       initContainers:
         - name: render
           image: alpine/k8s:1.37.1
@@ -136,6 +140,7 @@ spec:
     - name: verify
       serviceAccountName: delivery-verify
       activeDeadlineSeconds: 900
+      metadata: *stay
       container:
         image: alpine/k8s:1.37.1
         command: [sh, -euc]

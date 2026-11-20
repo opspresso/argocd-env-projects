@@ -52,6 +52,9 @@ for name, entry in ENTRYPOINTS.items():
             # retry a lost Pod.
             assert step.get("metadata", {}).get("annotations", {}).get("karpenter.sh/do-not-disrupt") == "true", f"{name}:{step['name']}"
             assert 'lastRetry.status == "Error"' in step.get("retryStrategy", {}).get("expression", ""), f"{name}:{step['name']}"
+        if name in ("app-deploy", "app-remove") and "container" in step:
+            # verify waits up to 10 minutes for a rollout: a Pod that Karpenter deletes to consolidate fails the Deployment.
+            assert step.get("metadata", {}).get("annotations", {}).get("karpenter.sh/do-not-disrupt") == "true", f"{name}:{step['name']}"
         if name in VMSS and "container" in step:
             # Entra exchanges only a token of this audience (the federated credential of delivery-target), read from the
             # file that target.sh azure_login reads. The Workflow passes no Azure credential otherwise.
