@@ -47,6 +47,15 @@ refuse "a declaration without architecture has no nodeSelector" 'nodeSelector' "
 refuse "a declaration without architecture has no tolerations" 'tolerations' "$no_arch"
 fails "an unknown architecture is refused" "architecture must be amd64 or arm64" \
   render "$(jq -c '.environment.architecture = "s390x"' <<<"$DEV_APP")" "$(printf 'a%.0s' $(seq 64))" todo-dev.apps.rovr.dev
+# environment.quota sets the namespace's CPU and memory bounds for the size tier and keeps the chart's other bounds.
+quota_values=$(mktemp); trap 'rm -f "$hostless" "$quota_values"' EXIT
+render "$(jq -c '.environment.quota = {cpu: "33000m", memory: "67584Mi"}' <<<"$DEV_APP")" "$(printf 'a%.0s' $(seq 64))" todo-dev.apps.rovr.dev > "$quota_values"
+quota_hard=$(app todo dev "$quota_values" | yq -r 'select(.kind == "ResourceQuota") | .spec.hard | [."requests.cpu", ."requests.memory", ."limits.memory", .pods] | join(",")')
+expect "a size tier's quota bounds the namespace's CPU and memory" '^33000m,67584Mi,67584Mi,16$' "$quota_hard"
+default_hard=$(app todo dev tests/app/dev.yaml | yq -r 'select(.kind == "ResourceQuota") | .spec.hard | [."requests.cpu", ."requests.memory", ."limits.memory"] | join(",")')
+expect "without a quota the chart's bounds stay" '^4,8Gi,8Gi$' "$default_hard"
+fails "a quota of another form is refused" "quota must be" \
+  render "$(jq -c '.environment.quota = {cpu: "4", memory: "8Gi"}' <<<"$DEV_APP")" "$(printf 'a%.0s' $(seq 64))" todo-dev.apps.rovr.dev
 
 dev=$(app todo dev tests/app/dev.yaml)
 split_probes=$(app todo dev <(render "$(jq -c '.runtime.health = "/ready" | .runtime.liveness = "/live"' <<<"$DEV_APP")" "$(printf 'a%.0s' $(seq 64))" todo-dev.apps.rovr.dev))
