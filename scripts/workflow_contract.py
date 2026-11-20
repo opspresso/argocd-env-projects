@@ -116,3 +116,13 @@ assert "volumes" not in checkout, "checkout mounts no Secret or key"
 script = checkout["container"]["args"][0]
 assert "git " not in script and "ssh " not in script, "checkout does not reach a Git host"
 assert 'aws s3 cp --only-show-errors "${SOURCE}"' in script and "s3://*/_sources/*.tar.gz" in script, "checkout reads only a Release source archive"
+
+# A large build runs up to two hours on a build NodePool (terraform-env-opsp demo/7-eks-shared delivery-<arch>), whose
+# taint only these steps tolerate. Karpenter must not consolidate a node under a step that runs app code.
+assert build["build"]["nodeSelector"] == {"kubernetes.io/arch": "{{inputs.parameters.arch}}",
+                                          "karpenter.sh/nodepool": "delivery-{{inputs.parameters.arch}}"}, "build runs on its build NodePool"
+for task in ("test", "build", "build-artifact"):
+    assert build[task]["metadata"]["annotations"]["karpenter.sh/do-not-disrupt"] == "true", task
+workflow_deadline = load("app-build-v2")["spec"]["activeDeadlineSeconds"]
+for task, step in build.items():
+    assert step.get("activeDeadlineSeconds", 0) < workflow_deadline, f"{task} deadline exceeds the Workflow deadline"
