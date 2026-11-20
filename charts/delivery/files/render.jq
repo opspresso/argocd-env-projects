@@ -6,6 +6,9 @@
 # they reach the Pods through the chart's ConfigMap. Secret Variables reach them through ExternalSecret app-env.
 # `environment.architecture` (amd64 or arm64) is the architecture of the Release image: the Pods run only on nodes of
 # that architecture, and amd64 Pods tolerate the taint of the amd64 NodePool. Without it the Pods have no constraint.
+# `environment.quota` ({cpu: "<n>m", memory: "<n>Mi"}) is the namespace ResourceQuota the size tier needs (Agent Runway
+# `namespaceQuota`: maxReplicas and the rollout's surge Pods, plus room for the dedicated resources); it replaces the
+# chart's CPU and memory bounds and keeps its other bounds. Without it the chart's bounds stay.
 ($application.runtime) as $r
 | ($application.environment) as $e
 | ($e.maxReplicas // $e.replicas) as $max
@@ -13,6 +16,9 @@
 | { path: $r.health, port: "http" } as $probe
 | ($e.architecture // null) as $arch
 | if $arch == null or $arch == "amd64" or $arch == "arm64" then . else error("architecture must be amd64 or arm64, not \($arch)") end
+| ($e.quota // null) as $quota
+| if $quota == null or (($quota.cpu | type) == "string" and ($quota.cpu | test("^[0-9]{1,6}m$")) and ($quota.memory | type) == "string" and ($quota.memory | test("^[0-9]{1,7}Mi$")))
+  then . else error("quota must be {cpu: <n>m, memory: <n>Mi}") end
 | {
     deployment: $deployment,
     app: (
@@ -55,5 +61,6 @@
       + (if $arch then { nodeSelector: { "kubernetes.io/arch": $arch } } else {} end)
       + (if $arch == "amd64" then { tolerations: [{ key: "opspresso.com/arch", operator: "Equal", value: "amd64",
           effect: "NoSchedule" }] } else {} end)
+      + (if $quota then { resourceQuota: { hard: { "requests.cpu": $quota.cpu, "requests.memory": $quota.memory, "limits.memory": $quota.memory } } } else {} end)
     )
   }
