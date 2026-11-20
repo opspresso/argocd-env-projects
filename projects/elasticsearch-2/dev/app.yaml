@@ -1,10 +1,10 @@
-# Written by the app-deploy workflow for Deployment 6e76ef20-dc73-49b4-8656-decef3687cb1. Do not edit.
-deployment: 6e76ef20-dc73-49b4-8656-decef3687cb1
+# Written by the app-deploy workflow for Deployment eace4c81-3f8d-462c-a077-952dcb93aa8c. Do not edit.
+deployment: eace4c81-3f8d-462c-a077-952dcb93aa8c
 app:
   controller:
     enabled: true
   image:
-    reference: nexus.demo.opsp.dev/runway-images/elasticsearch-2@sha256:49130283a1cd343753b8efe5db8b7f1b1d5fc2048cc732f9f8bdfe4436274e45
+    reference: nexus.demo.opsp.dev/runway-images/elasticsearch-2@sha256:016b0d61ab5704da633aa761133ac7fefc7b2c3a4436e2c2239504d76bbcc988
   imagePullSecrets:
     - name: nexus-reader
   raw:
@@ -33,16 +33,7 @@ app:
                 key: /k8s/common/nexus/runway-reader-password
   replicaCount: 1
   autoscaling:
-    enabled: true
-    minReplicas: 1
-    maxReplicas: 2
-    metrics:
-      - type: Resource
-        resource:
-          name: cpu
-          target:
-            type: Utilization
-            averageUtilization: 70
+    enabled: false
   pdb:
     enabled: false
   service:
@@ -76,28 +67,21 @@ app:
     failureThreshold: 3
   resources:
     requests:
-      cpu: "1"
-      memory: 2Gi
+      cpu: "8"
+      memory: 16Gi
     limits:
-      memory: 2Gi
+      memory: 16Gi
   externalSecrets:
     annotations:
-      force-sync: 6e76ef20-dc73-49b4-8656-decef3687cb1
+      force-sync: eace4c81-3f8d-462c-a077-952dcb93aa8c
   configmap:
     enabled: false
   podAnnotations:
-    opspresso.com/deployment: 6e76ef20-dc73-49b4-8656-decef3687cb1
-  topologySpreadConstraints:
-    - maxSkew: 1
-      topologyKey: kubernetes.io/hostname
-      whenUnsatisfiable: ScheduleAnyway
-      labelSelector:
-        matchLabels:
-          app.kubernetes.io/name: app
+    opspresso.com/deployment: eace4c81-3f8d-462c-a077-952dcb93aa8c
   nodeSelector:
     kubernetes.io/arch: arm64
   resourceQuota:
     hard:
-      requests.cpu: 4000m
-      requests.memory: 8192Mi
-      limits.memory: 8192Mi
+      requests.cpu: 17000m
+      requests.memory: 34816Mi
+      limits.memory: 34816Mi
