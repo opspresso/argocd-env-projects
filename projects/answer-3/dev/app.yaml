@@ -1,0 +1,112 @@
+# Written by the app-deploy workflow for Deployment f244f3be-ce04-4293-864c-9843913c6290. Do not edit.
+deployment: f244f3be-ce04-4293-864c-9843913c6290
+app:
+  controller:
+    enabled: true
+  image:
+    reference: nexus.demo.opsp.dev/runway-images/answer-3@sha256:b585fccae204b7fa237b4bea67a5f4b08831c69be878f4eb5a3576bbb177be7a
+  imagePullSecrets:
+    - name: nexus-reader
+  raw:
+    resources:
+      - apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: nexus-reader
+          annotations:
+            argocd.argoproj.io/sync-wave: "-1"
+        spec:
+          refreshInterval: 1h
+          secretStoreRef:
+            kind: SecretStore
+            name: agent-runway
+          target:
+            name: nexus-reader
+            template:
+              type: kubernetes.io/dockerconfigjson
+              engineVersion: v2
+              data:
+                .dockerconfigjson: '{"auths":{"nexus.demo.opsp.dev":{"auth":"{{ printf "runway-reader:%s" .password | b64enc }}"}}}'
+          data:
+            - secretKey: password
+              remoteRef:
+                key: /k8s/common/nexus/runway-reader-password
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    hosts:
+      - answer-3-dev.apps.rovr.dev
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+    - name: ADMIN_EMAIL
+      value: two@nalbam.com
+    - name: ADMIN_NAME
+      value: admin
+    - name: AUTO_INSTALL
+      value: "true"
+    - name: INSTALL_PORT
+      value: "8080"
+    - name: LANGUAGE
+      value: ko-KR
+    - name: SITE_ADDR
+      value: 0.0.0.0:8080
+    - name: SITE_NAME
+      value: Apache Answer
+  startupProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: f244f3be-ce04-4293-864c-9843913c6290
+  configmap:
+    enabled: true
+    data:
+      DB_PGDATABASE: delivery_f064fcd976344a86856abb4f63548778
+      DB_PGHOST: postgres.delivery-pool.svc.cluster.local
+      DB_PGPORT: "5432"
+      DB_PGUSER: delivery_f064fcd976344a86856abb4f63548778
+      SITE_URL: https://answer-3-dev.apps.rovr.dev
+  podAnnotations:
+    opspresso.com/deployment: f244f3be-ce04-4293-864c-9843913c6290
+  command:
+    - /bin/bash
+    - -c
+  args:
+    - 'set -e; export DB_TYPE=postgres DB_HOST="$DB_PGHOST" DB_NAME="$DB_PGDATABASE" DB_USERNAME="$DB_PGUSER" DB_PASSWORD="$DB_PGPASSWORD"; mkdir -p /data/conf; if [ ! -f /data/conf/config.yaml ]; then { echo "server:"; echo "  http:"; echo "    addr: 0.0.0.0:8080"; echo "data:"; echo "  database:"; echo "    driver: postgres"; echo "    connection: $DB_DATABASE_URL"; echo "  cache:"; echo "    file_path: /data/cache/cache.db"; echo "i18n:"; echo "  bundle_dir: /data/i18n"; echo "service_config:"; echo "  upload_path: /data/uploads"; echo "  clean_up_uploads: true"; echo "ui:"; echo "  public_url: /"; echo "  api_url: /"; } > /data/conf/config.yaml; fi; exec /entrypoint.sh'
+  nodeSelector:
+    kubernetes.io/arch: arm64
+  resourceQuota:
+    hard:
+      requests.cpu: 4000m
+      requests.memory: 8192Mi
+      limits.memory: 8192Mi
