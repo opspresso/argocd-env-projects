@@ -1,10 +1,10 @@
-# Written by the app-deploy workflow for Deployment f244f3be-ce04-4293-864c-9843913c6290. Do not edit.
-deployment: f244f3be-ce04-4293-864c-9843913c6290
+# Written by the app-deploy workflow for Deployment efd03a5a-7389-47b9-b587-6715e8504ef6. Do not edit.
+deployment: efd03a5a-7389-47b9-b587-6715e8504ef6
 app:
   controller:
     enabled: true
   image:
-    reference: nexus.demo.opsp.dev/runway-images/answer-3@sha256:b585fccae204b7fa237b4bea67a5f4b08831c69be878f4eb5a3576bbb177be7a
+    reference: nexus.demo.opsp.dev/runway-images/answer-3@sha256:087e95453d546d0f6aafdd2d8ef773f7d89505f4ee1aac5ec890fae0a2950953
   imagePullSecrets:
     - name: nexus-reader
   raw:
@@ -53,6 +53,10 @@ app:
       value: admin
     - name: AUTO_INSTALL
       value: "true"
+    - name: CONTACT_EMAIL
+      value: two@nalbam.com
+    - name: EXTERNAL_CONTENT_DISPLAY
+      value: always_display
     - name: INSTALL_PORT
       value: "8080"
     - name: LANGUAGE
@@ -87,7 +91,7 @@ app:
       memory: 256Mi
   externalSecrets:
     annotations:
-      force-sync: f244f3be-ce04-4293-864c-9843913c6290
+      force-sync: efd03a5a-7389-47b9-b587-6715e8504ef6
   configmap:
     enabled: true
     data:
@@ -97,12 +101,12 @@ app:
       DB_PGUSER: delivery_f064fcd976344a86856abb4f63548778
       SITE_URL: https://answer-3-dev.apps.rovr.dev
   podAnnotations:
-    opspresso.com/deployment: f244f3be-ce04-4293-864c-9843913c6290
+    opspresso.com/deployment: efd03a5a-7389-47b9-b587-6715e8504ef6
   command:
     - /bin/bash
     - -c
   args:
-    - 'set -e; export DB_TYPE=postgres DB_HOST="$DB_PGHOST" DB_NAME="$DB_PGDATABASE" DB_USERNAME="$DB_PGUSER" DB_PASSWORD="$DB_PGPASSWORD"; mkdir -p /data/conf; if [ ! -f /data/conf/config.yaml ]; then { echo "server:"; echo "  http:"; echo "    addr: 0.0.0.0:8080"; echo "data:"; echo "  database:"; echo "    driver: postgres"; echo "    connection: $DB_DATABASE_URL"; echo "  cache:"; echo "    file_path: /data/cache/cache.db"; echo "i18n:"; echo "  bundle_dir: /data/i18n"; echo "service_config:"; echo "  upload_path: /data/uploads"; echo "  clean_up_uploads: true"; echo "ui:"; echo "  public_url: /"; echo "  api_url: /"; } > /data/conf/config.yaml; fi; exec /entrypoint.sh'
+    - 'set -e; export DB_TYPE=postgres DB_HOST="$DB_PGHOST" DB_NAME="$DB_PGDATABASE" DB_USERNAME="$DB_PGUSER" DB_PASSWORD="$DB_PGPASSWORD"; DB_CONN="$DB_DATABASE_URL"; case "$DB_CONN" in *sslmode=*) DB_CONN="${DB_CONN/sslmode=require/sslmode=disable}";; *\?*) DB_CONN="$DB_CONN&sslmode=disable";; *://*) DB_CONN="$DB_CONN?sslmode=disable";; *) DB_CONN="$DB_CONN sslmode=disable";; esac; mkdir -p /data/conf; { echo "server:"; echo "  http:"; echo "    addr: 0.0.0.0:8080"; echo "data:"; echo "  database:"; echo "    driver: postgres"; echo "    connection: $DB_CONN"; echo "  cache:"; echo "    file_path: /data/cache/cache.db"; echo "i18n:"; echo "  bundle_dir: /data/i18n"; echo "service_config:"; echo "  upload_path: /data/uploads"; echo "  clean_up_uploads: true"; echo "ui:"; echo "  public_url: /"; echo "  api_url: /"; } > /data/conf/config.yaml; exec /entrypoint.sh'
   nodeSelector:
     kubernetes.io/arch: arm64
   resourceQuota:
