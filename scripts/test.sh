@@ -81,7 +81,8 @@ expect "each Deployment refreshes app-env before the rollout" 'force-sync: "?111
 expect "the workload has a Service" 'kind: Service$' "$dev"
 expect "the workload has an HTTPRoute" 'kind: HTTPRoute$' "$dev"
 expect "SecretStore tags the Project" 'key: delivery-project' "$dev"
-expect "ExternalSecret reads this environment" "path: '?/agent-runway/eks-demo/todo/dev'?$" "$dev"
+expect "tenant store uses Secrets Manager" "service: SecretsManager" "$dev"
+expect "ExternalSecret reads this environment" "path: '?/agent-runway/eks-demo/todo/dev/'?$" "$dev"
 expect "app-env is deleted when the environment has no Variables" "deletionPolicy: Delete$" "$dev"
 expect "apps reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$dev"
 expect "egress excludes instance metadata" '- 169\.254\.0\.0/16' "$dev"
@@ -128,7 +129,7 @@ expect "the last stage may carry its environment name" '"todo-prod.apps.rovr.dev
 fails "a namespace labelled for another Project is refused" "namespace must be created with the tenant labels" app todo dev tests/app/dev.yaml --set 'app.namespace.labels.opspresso\.com/delivery-project=other'
 fails "an environment that does not own its namespace is refused" "namespace must be created with the tenant labels" app todo dev tests/app/dev.yaml --set app.namespace.create=false
 # tests/app/override.yaml names another Project and environment; the ApplicationSet parameters replace both.
-expect "a values file cannot move the app to another environment" "path: '?/agent-runway/eks-demo/todo/dev'?$" "$(app todo dev tests/app/dev.yaml -f tests/app/override.yaml)"
+expect "a values file cannot move the app to another environment" "path: '?/agent-runway/eks-demo/todo/dev/'?$" "$(app todo dev tests/app/dev.yaml -f tests/app/override.yaml)"
 fails "an environment name with a hyphen is refused" "not an Agent Runway environment name" app todo dev-2 tests/app/dev.yaml
 fails "an environment name in another form is refused" "not an Agent Runway environment name" app todo Prod tests/app/prod.yaml
 fails "a tag instead of a digest is refused" "pin the image by digest" app todo dev tests/app/dev.yaml --set app.image.reference=nginx:latest
@@ -137,7 +138,7 @@ fails "an invalid slug is refused" "not an Agent Runway Project slug" app Todo d
 # Every environment Agent Runway has: each has its own namespace, Variables and hosts.
 staging=$(app todo staging tests/app/dev.yaml --set 'app.routing.hosts[0]=todo-staging.apps.rovr.dev')
 expect "another environment is served on <slug>-<env>.<domain>" '"todo-staging.apps.rovr.dev"' "$staging"
-expect "another environment reads its own Variables" "path: '?/agent-runway/eks-demo/todo/staging'?$" "$staging"
+expect "another environment reads its own Variables" "path: '?/agent-runway/eks-demo/todo/staging/'?$" "$staging"
 
 # Before the first deployment (no app.yaml) the environment has its tenant objects only, so resources.yaml can use app-env.
 base=$(app todo dev /dev/null)

@@ -25,7 +25,7 @@ spec:
   refreshInterval: 1h
   secretStoreRef:
     kind: ClusterSecretStore
-    name: parameter-store
+    name: secrets-manager
   target:
     name: gitops-deploy-key
   data:
@@ -64,7 +64,7 @@ metadata:
   name: delivery-nexus
 spec:
   refreshInterval: 1h
-  secretStoreRef: {kind: ClusterSecretStore, name: parameter-store}
+  secretStoreRef: {kind: ClusterSecretStore, name: secrets-manager}
   target:
     name: delivery-nexus
   data:

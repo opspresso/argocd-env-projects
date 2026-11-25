@@ -78,7 +78,7 @@ Parameters:
     Default: Immutable
   SecretsPath:
     Type: String
-    Description: The SSM path of this Project environment's Variables (/agent-runway/<target>/<project>/<environment>).
+    Description: The Secrets Manager name prefix of this Project environment's Variables (/agent-runway/<target>/<project>/<environment>).
     AllowedPattern: "^/agent-runway/[a-z0-9-]+/[a-z0-9-]+/[a-z0-9]+$"
   SecretsKeyArn:
     Type: String
@@ -151,14 +151,14 @@ Resources:
                   - !Sub arn:${AWS::Partition}:elasticbeanstalk:${AWS::Region}:${AWS::AccountId}:application/${AWS::StackName}
                   - !Sub arn:${AWS::Partition}:elasticbeanstalk:${AWS::Region}:${AWS::AccountId}:environment/${AWS::StackName}/*
               - Effect: Allow
-                Action: [ssm:GetParameter]
-                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPath}/*
+                Action: [secretsmanager:GetSecretValue]
+                Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretsPath}/*
               - Effect: Allow
                 Action: [kms:Decrypt]
                 Resource: !Ref SecretsKeyArn
                 Condition:
                   StringEquals:
-                    kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+                    kms:ViaService: !Sub secretsmanager.${AWS::Region}.amazonaws.com
       Tags:
         - { Key: opspresso.com/delivery-project, Value: !Ref Project }
         - { Key: opspresso.com/delivery-env, Value: !Ref Environment }
