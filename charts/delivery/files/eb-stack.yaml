@@ -82,7 +82,7 @@ Parameters:
     AllowedPattern: "^/agent-runway/[a-z0-9-]+/[a-z0-9-]+/[a-z0-9]+$"
   SecretsKeyArn:
     Type: String
-    Description: The KMS key of the SecureString Variables.
+    Description: The KMS key that encrypts the Secrets Manager Variables.
 
 Rules:
   UserCodeNeedsScopedRole:
