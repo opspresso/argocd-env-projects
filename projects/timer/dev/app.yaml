@@ -1,0 +1,87 @@
+# Written by the app-deploy workflow for Deployment 847b4a33-d88d-4d1a-9334-cf68d4e357ba. Do not edit.
+deployment: 847b4a33-d88d-4d1a-9334-cf68d4e357ba
+app:
+  controller:
+    enabled: true
+  image:
+    reference: nexus.demo.opsp.dev/runway-images/timer@sha256:5e0c3aa7a6a6043b113004c8abea7aaf6c9f266b658b0982704017f4cac7415b
+  imagePullSecrets:
+    - name: nexus-reader
+  raw:
+    resources:
+      - apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: nexus-reader
+          annotations:
+            argocd.argoproj.io/sync-wave: "-1"
+        spec:
+          refreshInterval: 1h
+          secretStoreRef:
+            kind: SecretStore
+            name: agent-runway
+          target:
+            name: nexus-reader
+            template:
+              type: kubernetes.io/dockerconfigjson
+              engineVersion: v2
+              data:
+                .dockerconfigjson: '{"auths":{"nexus.demo.opsp.dev":{"auth":"{{ printf "runway-reader:%s" .password | b64enc }}"}}}'
+          data:
+            - secretKey: password
+              remoteRef:
+                key: /k8s/common/nexus/runway-reader-password
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    enabled: true
+    targetPort: 8080
+  routing:
+    hosts:
+      - timer-dev.apps.rovr.dev
+    httpRoute:
+      enabled: true
+  env:
+    - name: PORT
+      value: "8080"
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    failureThreshold: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
+  externalSecrets:
+    annotations:
+      force-sync: 847b4a33-d88d-4d1a-9334-cf68d4e357ba
+  configmap:
+    enabled: false
+  podAnnotations:
+    opspresso.com/deployment: 847b4a33-d88d-4d1a-9334-cf68d4e357ba
+  nodeSelector:
+    kubernetes.io/arch: arm64
+  resourceQuota:
+    hard:
+      requests.cpu: 4000m
+      requests.memory: 8192Mi
+      limits.memory: 8192Mi
