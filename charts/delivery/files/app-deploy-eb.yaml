@@ -1,5 +1,5 @@
 # Deploy a verified Nexus JAR/WAR on the selected native Java SE or Tomcat platform.
-# The bundle contains only secret references; the instance resolves SSM with its scoped role.
+# The bundle contains only secret references; the instance resolves Secrets Manager with its scoped role.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:

@@ -60,7 +60,7 @@ app:
     region: ap-northeast-2
     tenantSecretsRoleArn: ""
 
-  # Every Agent Runway Variable of this environment, from the SSM path that the tenant role may read. The role reads
+  # Every Agent Runway Variable of this environment, from the Secrets Manager prefix that the tenant role may read. The role reads
   # only the paths that the session tags name. The delivery-tenant-secret-stores admission policy (argocd-env-apps
   # charts/delivery-tenants) allows the role only in namespace app-<project>-<env> whose labels equal the tags.
   externalSecrets:
@@ -68,12 +68,16 @@ app:
     name: app-env
     # A chart server waits for its generated password here, so a new resource starts within a minute.
     refreshInterval: 1m
+    # Use the same tenant store when an operator manages its lifecycle outside this release.
+    secretStoreRef:
+      kind: SecretStore
+      name: agent-runway
     secretStore:
       enabled: true
       name: agent-runway
       provider:
         aws:
-          service: ParameterStore
+          service: SecretsManager
           region: "{{ .Values.tenant.region }}"
           role: '{{ required "tenant.tenantSecretsRoleArn is required" .Values.tenant.tenantSecretsRoleArn }}'
           sessionTags:
@@ -83,7 +87,7 @@ app:
               value: "{{ .Values.tenant.environment }}"
     dataFrom:
       - find:
-          path: "{{ printf \"/agent-runway/%s/%s/%s\" (required \"tenant.cluster is required\" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}"
+          path: "{{ printf \"/agent-runway/%s/%s/%s/\" (required \"tenant.cluster is required\" .Values.tenant.cluster) .Values.tenant.project .Values.tenant.environment }}"
           name:
             regexp: ".*"
         rewrite:

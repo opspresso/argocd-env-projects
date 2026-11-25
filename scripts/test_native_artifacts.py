@@ -135,7 +135,7 @@ class NativeBundle(unittest.TestCase):
             options = json.loads(archive.read(".ebextensions/01-environment.config"))["option_settings"]
             secret = next(x for x in options if x["option_name"] == "API_KEY")
             self.assertEqual(secret["namespace"], "aws:elasticbeanstalk:application:environmentsecrets")
-            self.assertEqual(secret["value"], "arn:aws:ssm:ap-northeast-2:123456789012:parameter/agent-runway/eb-demo/app/dev/API_KEY")
+            self.assertEqual(secret["value"], "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:/agent-runway/eb-demo/app/dev/API_KEY")
             archive.extractall(self.root / "expanded")
         process = subprocess.run([sys.executable, "runway-launch.py"], cwd=self.root / "expanded", capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(process.stdout), self.application["runtime"]["args"])

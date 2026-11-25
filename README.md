@@ -11,7 +11,7 @@ Agent Runway가 배포하는 앱의 GitOps 저장소입니다. Studio Agent가 A
 | --- | --- | --- |
 | `charts/app/` | 앱 Environment 하나의 wrapper chart. [opspresso/helm-charts](https://github.com/opspresso/helm-charts)의 `app` chart(argocd-env-apps의 sample-node·agent-*와 같은 chart)의 설정으로 Namespace·Deployment·Service·HTTPRoute·HPA·PDB·SecretStore·ExternalSecret·NetworkPolicy·ResourceQuota를 만든다. Namespace `app-<slug>-<env>`는 이 Application의 객체이므로 Project나 Environment가 없어지면 Argo CD가 namespace와 그 안의 모든 객체를 지운다. `app.yaml`이 없으면 Deployment·Service·HTTPRoute 없이 tenant 객체만 만든다. `app.raw`에는 환경 경계를 검사하는 guard와 kubelet 전용 Nexus pull ExternalSecret을 둔다 | 운영자(PR) |
 | `charts/delivery/` | namespace `app-delivery`의 Argo Workflows WorkflowTemplate `app-build-v2`·`app-deploy`·`app-remove`·`resource-sync`·`env-cleanup`, CronWorkflow `env-cleanup`, 단계별 ServiceAccount·RBAC, 설정 | 운영자(PR) |
-| `projects/<slug>/<env>/app.yaml` | Environment 하나의 `app` chart 값: 이미지 digest, 복제 수, port, env, 비밀이 아닌 Variable(ConfigMap), probe, 자원, 노드 architecture(`nodeSelector` `kubernetes.io/arch`, amd64는 NodePool taint `opspresso.com/arch=amd64:NoSchedule`의 toleration도). 시크릿 Variable은 SSM에서 ExternalSecret `app-env`로 받는다. `app-deploy`의 deploy 단계가 `charts/delivery/files/render.jq`로 Agent Runway의 선언에서 만든다 | `app-deploy` workflow가 쓰고 `app-remove` workflow가 지운다 |
+| `projects/<slug>/<env>/app.yaml` | Environment 하나의 `app` chart 값: 이미지 digest, 복제 수, port, env, 비밀이 아닌 Variable(ConfigMap), probe, 자원, 노드 architecture(`nodeSelector` `kubernetes.io/arch`, amd64는 NodePool taint `opspresso.com/arch=amd64:NoSchedule`의 toleration도). 시크릿 Variable은 Secrets Manager에서 ExternalSecret `app-env`로 받는다. `app-deploy`의 deploy 단계가 `charts/delivery/files/render.jq`로 Agent Runway의 선언에서 만든다 | `app-deploy` workflow가 쓰고 `app-remove` workflow가 지운다 |
 | `projects/<slug>/<env>/resources.yaml` | Environment 하나의 AWS 전용 리소스(kro 인스턴스 `RdsPostgres`·`S3Bucket`·`DynamoTable`). Agent Runway가 렌더링한 manifest를 `resource-sync`의 write 단계가 검사해 기록한다 | `resource-sync` workflow만 |
 | `projects/<slug>/<env>/resources/<name>.yaml` | Kubernetes 전용 리소스 하나의 chart 이름·버전과 값(`postgres`·`valkey`, opspresso/helm-charts). ApplicationSet `project-resources`가 파일마다 Application `app-<project>-<env>-<name>-<id 8자리>`를 만든다 | `resource-sync` workflow만 |
 | `scripts/test.sh` | 두 chart를 Argo CD와 같은 parameter로 렌더링하고 계약을 검사한다 | |
@@ -54,12 +54,12 @@ flowchart LR
 | `app-build-v2` | `build` | `delivery-runner` | 요청한 architecture의 노드에서 kaniko `--no-push`로 컨테이너 tar를 만든다. 게시 자격 증명과 AWS identity가 없다 |
 | `app-build-v2` | `build-artifact` | `delivery-runner` | 선언한 builder image와 command로 JAR/WAR를 만든다. 게시 자격 증명이 없다 |
 | `app-build-v2` | `publish-image`·`publish-artifact` | `delivery-runner` | 소스 volume을 읽기 전용으로 연결한다. 별도 Nexus 게시 계정으로 산출물을 올리고 digest 또는 SHA-256·크기를 검증한다 |
-| `app-deploy` | `deploy` | `delivery-git` | 이미지가 그 Project의 digest 고정 이미지인지 확인하고 `projects/<slug>/<env>/app.yaml`에 기록한다. 이 저장소에만 쓰기 권한이 있는 deploy key(SSM `/k8s/common/app-delivery/gitops-deploy-key`)로 push한다 |
+| `app-deploy` | `deploy` | `delivery-git` | 이미지가 그 Project의 digest 고정 이미지인지 확인하고 `projects/<slug>/<env>/app.yaml`에 기록한다. 이 저장소에만 쓰기 권한이 있는 deploy key(Secrets Manager `/k8s/common/app-delivery/gitops-deploy-key`)로 push한다 |
 | `app-deploy` | `verify` | `delivery-verify` | rollout 완료(최대 10분)와 `https://<host><health>`의 2xx 응답(최대 3분)을 기다린다. 이 rollout의 컨테이너가 3번 재시작한 뒤 `CrashLoopBackOff`이면 기다리지 않고 실패한다. 앱 출력은 시크릿을 담을 수 있으므로 적지 않는다 |
 | `app-remove` | `remove` | `delivery-git` | `projects/<slug>/<env>/app.yaml`을 지운다. 리소스는 그대로 둔다 |
 | `app-remove` | `verify` | `delivery-verify` | Argo CD가 namespace의 Deployment `app`을 지울 때까지 기다린다 |
 | `app-remove` | `cleanup` | `delivery-verify`·`delivery-git` | `env-cleanup`의 `check-and-prune`. 아래 `env-cleanup`의 `live`·`prune`과 같다. 이 Workflow가 이미 잡은 mutex 안에서 실행한다 |
-| `app-deploy-eb` | `deploy` | `delivery-target` | Nexus 파일을 읽기 계정으로 내려받아 기록한 SHA-256·크기를 확인한다. JAR/ROOT.war와 EB 환경 secret의 SSM ARN 참조를 bundle에 넣고 target 계정의 stack을 배포한다. 설치 스크립트는 prebuild hook으로 실행하며 실패하면 배포가 실패한다 |
+| `app-deploy-eb` | `deploy` | `delivery-target` | Nexus 파일을 읽기 계정으로 내려받아 기록한 SHA-256·크기를 확인한다. JAR/ROOT.war와 EB 환경 secret의 Secrets Manager ARN 참조를 bundle에 넣고 target 계정의 stack을 배포한다. 설치 스크립트는 prebuild hook으로 실행하며 실패하면 배포가 실패한다 |
 | `app-deploy-eb` | `verify` | `delivery-target` | Elastic Beanstalk 환경이 이 Deployment의 version을 `Ok` health로 실행하고 `https://<host><health>`가 2xx를 반환할 때까지 기다린다 |
 | `app-remove-eb` | `remove`·`verify` | `delivery-target` | stack `runway-<slug>-<env>`를 지우고 없어졌는지 확인한다. 리소스와 Variable은 남긴다 |
 | `app-deploy-vmss` | `deploy` | `delivery-target` | Nexus 파일을 읽기 계정으로 내려받아 기록한 SHA-256·크기를 확인한다. 앱 identity에 선언한 secret과 bundle container만 읽는 역할을 주고, JAR와 실행 설정을 container에 올린 뒤 `vmss-app.json`과 Front Door route를 배포한다. 새 instance가 healthy가 되고 Front Door가 도메인을 확인할 때까지 기다린다 |
@@ -168,7 +168,7 @@ Agent Runway 콘솔에서 환경을 추가하면 됩니다. 이 저장소와 arg
 
 `charts/delivery`에는 `registry`(예: `nexus.example/runway-images`)와 `artifactRepository`
 (예: `https://nexus.example/repository/runway-artifacts`)를 함께 지정한다. 두 저장소는 immutable 게시 정책을 사용한다.
-`delivery-nexus` ExternalSecret은 SSM의 publisher·reader 비밀번호를 가져온다. 게시 계정은 두 publisher 단계만,
+`delivery-nexus` ExternalSecret은 Secrets Manager의 publisher·reader 비밀번호를 가져온다. 게시 계정은 두 publisher 단계만,
 읽기 계정은 native deploy 단계만 받는다. EKS 앱의 kubelet은 별도 `nexus-reader` Secret을 사용하며 앱 환경 변수에는 넣지 않는다.
 
 빌드와 테스트는 Project architecture의 노드에서 실행한다. `platforms`는 하나만 받으며 QEMU를 사용하지 않는다.
@@ -176,14 +176,14 @@ Nexus 이미지 tag는 `<pipeline>-<Release ID>`, 파일 경로는 `<project>/<p
 승격은 이 산출물을 다시 빌드하지 않는다. 파일 출력은 일반 파일 하나, 최대 450 MiB이며 symlink·경로 이탈·해시 불일치를 거부한다.
 
 EB는 Java SE의 executable JAR 또는 Tomcat의 ROOT.war를 실행한다. Docker Compose와 instance ECR pull은 사용하지 않는다.
-현재 Java 플랫폼의 `environmentsecrets` 기능으로 SSM ARN만 전달하며 secret 값을 bundle에 저장하지 않는다.
+현재 Java 플랫폼의 `environmentsecrets` 기능으로 Secrets Manager ARN만 전달하며 secret 값을 bundle에 저장하지 않는다.
 기존 ECR workflow와 호환되지 않으므로 진행 중인 배포를 끝내고, 서비스·workflow·Nexus 설정을 함께 전환한다.
 
 ### EB 환경별 산출물 권한
 
 EB 기본 `AWSElasticBeanstalkWebTier` 정책은 다른 환경의 S3 번들도 읽을 수 있으므로 사용하지 않습니다.
 인스턴스 역할은 해당 EB 환경 ID의 S3 경로와 환경 이름의 CloudWatch 로그만 읽거나 쓸 수 있습니다.
-SSM은 해당 Project·환경 경로만 허용합니다.
+Secrets Manager는 해당 Project·환경 경로만 허용합니다.
 EB 버킷 정책이 역할에 직접 부여하는 권한도 있으므로, 다른 환경 객체 읽기·목록 조회에는 명시적 거부를 둡니다.
 앱은 자신의 로그 경로에만 쓸 수 있으며, 배포 번들을 덮어쓸 수 없습니다.
 자기 환경의 tail·bundle·publish·deployments 로그 경로는 유지합니다.

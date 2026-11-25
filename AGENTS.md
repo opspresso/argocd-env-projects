@@ -65,7 +65,7 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
   They keep the parameters, results and DAG task names of `app-deploy` and `app-remove` and add `target`. Only their
   steps run as `delivery-target`, which may assume only the Target deploy role `agent-runway-target-deploy`
   (`target.sh` checks it). The stack (`eb-stack.yaml`) and the source bundle (`eb-bundle.py`) take every value from
-  Agent Runway and the Target. Secret values never enter the bundle, the stack or the Workflow: Elastic Beanstalk resolves their SSM ARN references through the instance role when the app starts.
+  Agent Runway and the Target. Secret values never enter the bundle, the stack or the Workflow: Elastic Beanstalk resolves their Secrets Manager ARN references through the instance role when the app starts.
   The instances get public addresses only when the Target puts them in its load balancer subnets (`target.sh` `public_ip`):
   those subnets are public and have no NAT, as in the default VPC. Instances in other (private) subnets get none.
 - `app-deploy-vmss` and `app-remove-vmss` deploy to and remove from an `azure-vmss` Target with the same parameters,

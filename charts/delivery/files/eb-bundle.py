@@ -1,7 +1,7 @@
 """Bundle a verified JAR or WAR for native Elastic Beanstalk execution.
 
-Usage: eb-bundle.py <application.json> <artifact file> <SSM path> <region> <account> <out.zip> [<install script>]
-Secret values remain in SSM. EB resolves their ARNs using the instance's scoped IAM role.
+Usage: eb-bundle.py <application.json> <artifact file> <secrets path> <region> <account> <out.zip> [<install script>]
+Secret values remain in Secrets Manager. EB resolves their ARNs using the instance's scoped IAM role.
 """
 import json
 import re
@@ -67,7 +67,7 @@ def main(application_file, artifact_file, secrets_path, region, account, out, in
     options = [{"namespace": "aws:elasticbeanstalk:application:environment", "option_name": name, "value": str(value)}
                for name, value in sorted(environment.items())]
     options += [{"namespace": "aws:elasticbeanstalk:application:environmentsecrets", "option_name": name,
-                 "value": f"arn:aws:ssm:{region}:{account}:parameter{secrets_path}/{name}"} for name in sorted(secrets)]
+                 "value": f"arn:aws:secretsmanager:{region}:{account}:secret:{secrets_path}/{name}"} for name in sorted(secrets)]
     if sum(len((item["option_name"] + item["value"]).encode()) for item in options) > 4096:
         raise ValueError("Elastic Beanstalk environment properties exceed 4096 bytes")
     files = [(".ebextensions/01-environment.config", json.dumps({"option_settings": options}), 0o100644)]
