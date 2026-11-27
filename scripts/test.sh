@@ -389,6 +389,11 @@ fails "the name app is refused" "ChartReleases of charts" check <<<"${release/na
 fails "an image override is refused" "ChartReleases of charts" check <<<"${release/storageGiB: 5\}/storageGiB: 5\}
     image: \{repository: evil\}}"
 fails "a chart version without a fixed number is refused" "ChartReleases of charts" check <<<"${release/version: 1.0.0/version: latest}"
+current=${release/runway.opspresso.com/runway.agentops.clush.net}
+current=${current/opspresso.com\/resource/agentops.clush.net\/resource}
+check <<<"$current" >/dev/null
+expect "a ChartRelease of the current group and label is written" '^resourceId: 0123abcd0123412381230123456789ab$' "$(cat "$declared/resources/db.yaml")"
+fails "a ChartRelease of another group is refused" "ChartReleases of charts" check <<<"${current/runway.agentops.clush.net/runway.example.com}"
 expect "a push that loses the GitHub ref lock is retried" 'cannot lock ref' "$(grep -E 'grep -qE' charts/delivery/files/commit.sh)"
 # commit.sh's commit(): an empty SOURCE removes TARGET. An emptied environment directory stays with an empty
 # resources.yaml (commit 1); PRUNE_EMPTY removes it only while it is still empty (commit 2).
