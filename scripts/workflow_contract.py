@@ -94,7 +94,7 @@ for name, entry in ENTRYPOINTS.items():
         if account == "delivery-runner":
             assert step.get("serviceAccountName") is None, (name, step["name"])
             assert step.get("automountServiceAccountToken") is False, (name, step["name"])
-            assert step["metadata"]["labels"]["opspresso.com/delivery-role"] == "runner", (name, step["name"])
+            assert step["metadata"]["labels"]["agentops.clush.net/delivery-role"] == "runner", (name, step["name"])
         if account == "delivery-target":
             target_steps.append(f"{name}:{step['name']}")
         secrets = [v["secret"]["secretName"] for v in step.get("volumes", []) if "secret" in v]

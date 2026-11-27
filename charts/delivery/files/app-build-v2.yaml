@@ -164,7 +164,7 @@ spec:
         serviceAccountName: delivery-runner
       metadata:
         labels:
-          opspresso.com/delivery-role: runner
+          agentops.clush.net/delivery-role: runner
       container:
         image: alpine/k8s:1.37.1
         command: [sh, -euc]
@@ -236,7 +236,7 @@ spec:
       # Karpenter does not move a Pod that runs app code to consolidate nodes; the step would start again.
       metadata: &runner
         labels:
-          opspresso.com/delivery-role: runner
+          agentops.clush.net/delivery-role: runner
         annotations:
           karpenter.sh/do-not-disrupt: "true"
       container:
@@ -265,7 +265,7 @@ spec:
       nodeSelector:
         kubernetes.io/arch: '{{inputs.parameters.arch}}'
       tolerations:
-        - key: opspresso.com/delivery-build
+        - key: agentops.clush.net/delivery-build
           operator: Equal
           value: 'true'
           effect: NoSchedule
@@ -285,7 +285,7 @@ spec:
         kubernetes.io/arch: "{{inputs.parameters.arch}}"
         karpenter.sh/nodepool: "delivery-{{inputs.parameters.arch}}"
       tolerations:
-        - {key: opspresso.com/delivery-build, operator: Equal, value: "true", effect: NoSchedule}
+        - {key: agentops.clush.net/delivery-build, operator: Equal, value: "true", effect: NoSchedule}
       container:
         image: ghcr.io/osscontainertools/kaniko:v1.29.1-debug
         command: [/busybox/sh, -euc]
@@ -336,7 +336,7 @@ spec:
       nodeSelector:
         kubernetes.io/arch: '{{inputs.parameters.arch}}'
       tolerations:
-        - key: opspresso.com/delivery-build
+        - key: agentops.clush.net/delivery-build
           operator: Equal
           value: 'true'
           effect: NoSchedule
@@ -383,7 +383,7 @@ spec:
         serviceAccountName: delivery-runner
       metadata:
         labels:
-          opspresso.com/delivery-role: runner
+          agentops.clush.net/delivery-role: runner
       container:
         image: gcr.io/go-containerregistry/crane/debug:v0.22.1
         command:
@@ -458,7 +458,7 @@ spec:
       nodeSelector:
         kubernetes.io/arch: '{{inputs.parameters.arch}}'
       tolerations:
-        - key: opspresso.com/delivery-build
+        - key: agentops.clush.net/delivery-build
           operator: Equal
           value: 'true'
           effect: NoSchedule
@@ -475,7 +475,7 @@ spec:
         serviceAccountName: delivery-runner
       metadata:
         labels:
-          opspresso.com/delivery-role: runner
+          agentops.clush.net/delivery-role: runner
       container:
         image: python:3.14-alpine
         command:
@@ -538,7 +538,7 @@ spec:
       nodeSelector:
         kubernetes.io/arch: '{{inputs.parameters.arch}}'
       tolerations:
-        - key: opspresso.com/delivery-build
+        - key: agentops.clush.net/delivery-build
           operator: Equal
           value: 'true'
           effect: NoSchedule

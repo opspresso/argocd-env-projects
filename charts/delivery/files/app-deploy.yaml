@@ -157,7 +157,7 @@ spec:
               # The Deployment annotation proves that this Deployment's commit rolled out, even when the image is the same.
               if [ -n "$state" ] && printf '%s' "$state" | jq -e --arg digest "$digest" --arg deployment "$DEPLOYMENT" '
                   (.spec.template.spec.containers[0].image | endswith("@" + $digest))
-                  and (.spec.template.metadata.annotations["opspresso.com/deployment"] == $deployment)
+                  and (.spec.template.metadata.annotations["agentops.clush.net/deployment"] == $deployment)
                   and (.status.observedGeneration // 0) >= .metadata.generation
                   and (.status.updatedReplicas // 0) == (.status.replicas // -1)
                   and (.status.availableReplicas // 0) == (.status.replicas // -1)
@@ -174,7 +174,7 @@ spec:
               # The app's output is not printed here, because it can hold secret values; Agent Runway's service_logs
               # returns it redacted.
               crashed=$(kubectl get pods -n "$namespace" -o json 2>/dev/null | jq -r --arg deployment "$DEPLOYMENT" '
-                  [.items[] | select(.metadata.annotations["opspresso.com/deployment"] == $deployment)
+                  [.items[] | select(.metadata.annotations["agentops.clush.net/deployment"] == $deployment)
                    | .status.containerStatuses[]? | select(.state.waiting.reason == "CrashLoopBackOff" and .restartCount >= 3) | .name] | length' || echo 0)
               if [ "${crashed:-0}" -gt 0 ]; then
                 echo "The app of this rollout keeps exiting (CrashLoopBackOff after 3 restarts). Read its output with service_logs."

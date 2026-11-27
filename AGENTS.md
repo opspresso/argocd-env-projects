@@ -45,7 +45,7 @@ This repository is the GitOps home of the apps that Agent Runway deploys. The co
 - `charts/delivery/files/render.jq` is the only mapping from Agent Runway's declaration to `app` chart values; the deploy step
   and `scripts/test.sh` both use it.
 - `render.jq` maps `environment.architecture` (`amd64` or `arm64`, the Release image's architecture) to `nodeSelector`
-  `kubernetes.io/arch`; `amd64` also tolerates the amd64 NodePool taint `opspresso.com/arch=amd64:NoSchedule`. Another value
+  `kubernetes.io/arch`; `amd64` also tolerates the amd64 NodePool taint `agentops.clush.net/arch=amd64:NoSchedule`. Another value
   fails the deploy step. Without the value the Pods have no scheduling constraint.
 - The app chart renders only the kinds that AppProject `projects` allows. Adding a kind needs a change there too.
 - `charts/delivery/files/{app-build-v2,app-deploy,app-remove,app-deploy-eb,app-remove-eb,app-deploy-vmss,app-remove-vmss,resource-sync,env-cleanup}.yaml` are static. Argo's `{{...}}` parameters must not

@@ -52,14 +52,14 @@
         externalSecrets: { annotations: { "force-sync": $deployment } },
         # A changed value changes the chart's config checksum, so the Pods restart with it.
         configmap: (if ($config | length) > 0 then { enabled: true, data: ($config | with_entries(.value |= tostring)) } else { enabled: false } end),
-        podAnnotations: { "opspresso.com/deployment": $deployment }
+        podAnnotations: { "agentops.clush.net/deployment": $deployment }
       }
       + (if $r.command then { command: $r.command } else {} end)
       + (if $r.args then { args: $r.args } else {} end)
       + (if $max > 1 then { topologySpreadConstraints: [{ maxSkew: 1, topologyKey: "kubernetes.io/hostname",
           whenUnsatisfiable: "ScheduleAnyway", labelSelector: { matchLabels: { "app.kubernetes.io/name": "app" } } }] } else {} end)
       + (if $arch then { nodeSelector: { "kubernetes.io/arch": $arch } } else {} end)
-      + (if $arch == "amd64" then { tolerations: [{ key: "opspresso.com/arch", operator: "Equal", value: "amd64",
+      + (if $arch == "amd64" then { tolerations: [{ key: "agentops.clush.net/arch", operator: "Equal", value: "amd64",
           effect: "NoSchedule" }] } else {} end)
       + (if $quota then { resourceQuota: { hard: { "requests.cpu": $quota.cpu, "requests.memory": $quota.memory, "limits.memory": $quota.memory } } } else {} end)
     )

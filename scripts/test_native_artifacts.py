@@ -169,7 +169,7 @@ class RegistrySecret(unittest.TestCase):
     def test_helm_and_external_secret_template_preserve_registry_credentials(self):
         values = {"app": {"controller": {"enabled": True}, "image": {"reference": "nexus.example/runway-images/app@sha256:" + "a" * 64},
                           "routing": {"hosts": ["test-dev.apps.example"]},
-                          "namespace": {"labels": {"opspresso.com/delivery-project": "test", "opspresso.com/delivery-env": "dev"}},
+                          "namespace": {"labels": {"agentops.clush.net/delivery-project": "test", "agentops.clush.net/delivery-env": "dev"}},
                           "tenant": {"project": "test", "environment": "dev", "domain": "apps.example", "cluster": "eks-demo",
                                      "tenantSecretsRoleArn": "arn:aws:iam::123456789012:role/agent-runway-tenant-secrets"}}}
         generated = subprocess.check_output(["jq", "-n", "--argjson", "application", json.dumps({"runtime": {"port": 8080, "health": "/health"},
