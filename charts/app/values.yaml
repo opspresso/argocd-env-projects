@@ -22,7 +22,7 @@ app:
     create: true
     labels:
       pod-security.kubernetes.io/enforce: baseline
-      opspresso.com/delivery-tenant: "true"
+      agentops.clush.net/delivery-tenant: "true"
 
   # Pod Identity for bucket resources mounts its own token; the app needs no Kubernetes API token.
   serviceAccount:
@@ -175,7 +175,7 @@ app:
         {{- if not (regexMatch "^[a-z][a-z0-9]{1,11}$" ($t.environment | default "")) }}{{ fail (printf "tenant.environment %q is not an Agent Runway environment name" $t.environment) }}{{ end }}
         {{- if ne .Release.Namespace (printf "app-%s-%s" $t.project $t.environment) }}{{ fail (printf "release namespace %q must be app-%s-%s" .Release.Namespace $t.project $t.environment) }}{{ end }}
         {{- $labels := .Values.namespace.labels | default dict }}
-        {{- if or (not .Values.namespace.create) (ne (toString (index $labels "opspresso.com/delivery-tenant")) "true") (ne (toString (index $labels "opspresso.com/delivery-project")) $t.project) (ne (toString (index $labels "opspresso.com/delivery-env")) $t.environment) (ne (toString (index $labels "pod-security.kubernetes.io/enforce")) "baseline") }}{{ fail (printf "namespace must be created with the tenant labels of app-%s-%s" $t.project $t.environment) }}{{ end }}
+        {{- if or (not .Values.namespace.create) (ne (toString (index $labels "agentops.clush.net/delivery-tenant")) "true") (ne (toString (index $labels "agentops.clush.net/delivery-project")) $t.project) (ne (toString (index $labels "agentops.clush.net/delivery-env")) $t.environment) (ne (toString (index $labels "pod-security.kubernetes.io/enforce")) "baseline") }}{{ fail (printf "namespace must be created with the tenant labels of app-%s-%s" $t.project $t.environment) }}{{ end }}
         {{- if not $t.domain }}{{ fail "tenant.domain is required" }}{{ end }}
         {{- $bare := printf "%s.%s" $t.project $t.domain }}
         {{- $suffixed := printf "%s-%s.%s" $t.project $t.environment $t.domain }}

@@ -31,10 +31,9 @@ printf '%s\n' "$documents" | jq -e -s --arg namespace "$namespace" --arg kinds "
   # The chart Service takes the resource name, and the app chart owns the name app.
   | def named: ((.metadata.name // "") | test("^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$")) and ((.metadata.namespace // $namespace) == $namespace);
     def instance: (.apiVersion | type) == "string" and (.apiVersion | startswith("kro.run/")) and ((.kind as $kind | $allowed | index($kind)) != null);
-    # Agent Runway writes group runway.agentops.clush.net and label agentops.clush.net/resource; releases before
-    # v0.94.0 wrote runway.opspresso.com and opspresso.com/resource.
-    def rid: .metadata.labels["agentops.clush.net/resource"] // .metadata.labels["opspresso.com/resource"];
-    def release: (.apiVersion == "runway.agentops.clush.net/v1alpha1" or .apiVersion == "runway.opspresso.com/v1alpha1") and .kind == "ChartRelease"
+    # Agent Runway writes group runway.agentops.clush.net and label agentops.clush.net/resource.
+    def rid: .metadata.labels["agentops.clush.net/resource"];
+    def release: .apiVersion == "runway.agentops.clush.net/v1alpha1" and .kind == "ChartRelease"
       and .metadata.name != "app"
       and ((rid // "") | test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))
       and ((.spec.chart as $chart | $allowedCharts | index($chart)) != null)
@@ -52,6 +51,6 @@ printf '%s\n' "$documents" | jq -c 'select(.kind == "ChartRelease")' | while IFS
   name=$(printf '%s' "$release" | jq -r '.metadata.name')
   { printf '%s\n' "$header"
     printf '%s' "$release" | jq '.spec.values + {chart: .spec.chart, chartVersion: .spec.version, resourceName: .metadata.name,
-      resourceId: ((.metadata.labels["agentops.clush.net/resource"] // .metadata.labels["opspresso.com/resource"]) | gsub("-"; ""))}' | yq -p json -o yaml '.'
+      resourceId: (.metadata.labels["agentops.clush.net/resource"] | gsub("-"; ""))}' | yq -p json -o yaml '.'
   } > "$directory/resources/$name.yaml"
 done

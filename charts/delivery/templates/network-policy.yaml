@@ -8,7 +8,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      opspresso.com/delivery-role: runner
+      agentops.clush.net/delivery-role: runner
   policyTypes: [Ingress, Egress]
   egress:
     # Cluster DNS: CoreDNS Pods, or the DNS Service IP that EKS Auto Mode serves on each node.

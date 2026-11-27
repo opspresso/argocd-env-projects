@@ -24,8 +24,8 @@ app() {
     --set "app.tenant.project=${project}" --set "app.tenant.environment=${environment}" \
     --set app.tenant.domain=apps.rovr.dev --set app.tenant.cluster=eks-demo \
     --set app.tenant.tenantSecretsRoleArn=arn:aws:iam::123456789012:role/agent-runway-tenant-secrets \
-    --set "app.namespace.labels.opspresso\.com/delivery-project=${project}" \
-    --set "app.namespace.labels.opspresso\.com/delivery-env=${environment}" "$@"
+    --set "app.namespace.labels.agentops\.clush\.net/delivery-project=${project}" \
+    --set "app.namespace.labels.agentops\.clush\.net/delivery-env=${environment}" "$@"
 }
 expect() { if grep -qE -- "$2" <<<"$3"; then pass "$1"; else fail "$1"; fi; }
 refuse() { if grep -qE -- "$2" <<<"$3"; then fail "$1"; else pass "$1"; fi; }
@@ -76,7 +76,7 @@ expect "an app without Variables still starts" 'optional: true' "$dev"
 expect "the app runs as ServiceAccount app" 'serviceAccountName: "?app"?' "$dev"
 expect "the Pod gets no API token" 'automountServiceAccountToken: false' "$dev"
 expect "privilege escalation is off" 'allowPrivilegeEscalation: false' "$dev"
-expect "the Deployment annotation lets verify find this rollout" 'opspresso.com/deployment: "?11111111' "$dev"
+expect "the Deployment annotation lets verify find this rollout" 'agentops.clush.net/deployment: "?11111111' "$dev"
 expect "each Deployment refreshes app-env before the rollout" 'force-sync: "?11111111' "$dev"
 expect "the workload has a Service" 'kind: Service$' "$dev"
 expect "the workload has an HTTPRoute" 'kind: HTTPRoute$' "$dev"
@@ -87,7 +87,7 @@ expect "app-env is deleted when the environment has no Variables" "deletionPolic
 expect "apps reach the cluster DNS Service IP" 'cidr: 172.20.0.10/32' "$dev"
 expect "egress excludes instance metadata" '- 169\.254\.0\.0/16' "$dev"
 expect "the environment owns its namespace, so Argo CD deletes it with the Application" 'kind: Namespace$' "$dev"
-expect "the namespace carries the tenant labels the secret store policy checks" 'opspresso.com/delivery-project: "?todo"?$' "$dev"
+expect "the namespace carries the tenant labels the secret store policy checks" 'agentops.clush.net/delivery-project: "?todo"?$' "$dev"
 expect "the namespace is restricted to the baseline Pod security level" 'pod-security.kubernetes.io/enforce: "?baseline"?$' "$dev"
 expect "the environment has a ResourceQuota" 'kind: ResourceQuota' "$dev"
 expect "the ResourceQuota allows two RdsPostgres instances" 'count/rdspostgres.kro.run: "2"' "$dev"
@@ -95,7 +95,7 @@ expect "the ResourceQuota allows two S3Bucket instances" 'count/s3buckets.kro.ru
 expect "the ResourceQuota allows two DynamoTable instances" 'count/dynamotables.kro.run: "2"' "$dev"
 expect "the ResourceQuota bounds volumes" 'persistentvolumeclaims: "4"' "$dev"
 expect "arm64 Pods run on arm64 nodes" 'kubernetes.io/arch: "?arm64"?$' "$dev"
-refuse "arm64 Pods do not tolerate the amd64 NodePool" 'opspresso.com/arch' "$dev"
+refuse "arm64 Pods do not tolerate the amd64 NodePool" 'agentops.clush.net/arch' "$dev"
 refuse "one replica has no HPA" 'kind: HorizontalPodAutoscaler' "$dev"
 refuse "one replica has no PDB" 'kind: PodDisruptionBudget' "$dev"
 
@@ -111,7 +111,7 @@ expect "two replicas add a PDB" 'kind: PodDisruptionBudget' "$prod"
 expect "command is set" 'command:' "$prod"
 expect "health path is probed" 'path: /healthz' "$prod"
 expect "amd64 Pods run on amd64 nodes" 'kubernetes.io/arch: "?amd64"?$' "$prod"
-expect "amd64 Pods tolerate the amd64 NodePool taint" 'key: "?opspresso.com/arch"?$' "$prod"
+expect "amd64 Pods tolerate the amd64 NodePool taint" 'key: "?agentops.clush.net/arch"?$' "$prod"
 expect "apps reach the Pod Identity agent" 'cidr: 169.254.170.23/32' "$prod"
 
 fails "a release outside app-<slug>-<env> is refused" "release namespace" \
@@ -126,7 +126,7 @@ yq 'del(.app.routing.hosts)' tests/app/dev.yaml > "$hostless"
 fails "a workload without a host is refused" "routing.hosts must be exactly" app todo dev "$hostless"
 expect "every environment may be served on <slug>.<domain>" '"todo.apps.rovr.dev"' "$(app todo dev tests/app/dev.yaml --set 'app.routing.hosts[0]=todo.apps.rovr.dev')"
 expect "the last stage may carry its environment name" '"todo-prod.apps.rovr.dev"' "$(app todo prod tests/app/prod.yaml --set 'app.routing.hosts[0]=todo-prod.apps.rovr.dev')"
-fails "a namespace labelled for another Project is refused" "namespace must be created with the tenant labels" app todo dev tests/app/dev.yaml --set 'app.namespace.labels.opspresso\.com/delivery-project=other'
+fails "a namespace labelled for another Project is refused" "namespace must be created with the tenant labels" app todo dev tests/app/dev.yaml --set 'app.namespace.labels.agentops\.clush\.net/delivery-project=other'
 fails "an environment that does not own its namespace is refused" "namespace must be created with the tenant labels" app todo dev tests/app/dev.yaml --set app.namespace.create=false
 # tests/app/override.yaml names another Project and environment; the ApplicationSet parameters replace both.
 expect "a values file cannot move the app to another environment" "path: '?/agent-runway/eks-demo/todo/dev/'?$" "$(app todo dev tests/app/dev.yaml -f tests/app/override.yaml)"
@@ -366,11 +366,11 @@ all=$(check <<<"$(printf '%s\n---\n%s\n---\n%s' "$rds" "$table" "$bucket")" 2>&1
 expect "a DynamoTable instance is written" '^kind: DynamoTable$' "$all"
 expect "an S3Bucket instance is written" '^kind: S3Bucket$' "$all"
 fails "two kinds with one name are refused" "uniquely named" check <<<"$(printf '%s\n---\n%s' "$rds" "${table/name: events/name: main}")"
-release='apiVersion: runway.opspresso.com/v1alpha1
+release='apiVersion: runway.agentops.clush.net/v1alpha1
 kind: ChartRelease
 metadata:
   name: db
-  labels: {opspresso.com/resource: 0123abcd-0123-4123-8123-0123456789ab}
+  labels: {agentops.clush.net/resource: 0123abcd-0123-4123-8123-0123456789ab}
 spec:
   chart: postgres
   version: 1.0.0
@@ -390,11 +390,8 @@ fails "the name app is refused" "ChartReleases of charts" check <<<"${release/na
 fails "an image override is refused" "ChartReleases of charts" check <<<"${release/storageGiB: 5\}/storageGiB: 5\}
     image: \{repository: evil\}}"
 fails "a chart version without a fixed number is refused" "ChartReleases of charts" check <<<"${release/version: 1.0.0/version: latest}"
-current=${release/runway.opspresso.com/runway.agentops.clush.net}
-current=${current/opspresso.com\/resource/agentops.clush.net\/resource}
-check <<<"$current" >/dev/null
-expect "a ChartRelease of the current group and label is written" '^resourceId: 0123abcd0123412381230123456789ab$' "$(cat "$declared/resources/db.yaml")"
-fails "a ChartRelease of another group is refused" "ChartReleases of charts" check <<<"${current/runway.agentops.clush.net/runway.example.com}"
+fails "a ChartRelease of the earlier group is refused" "ChartReleases of charts" check <<<"${release/runway.agentops.clush.net/runway.opspresso.com}"
+fails "a ChartRelease with only the earlier resource label is refused" "ChartReleases of charts" check <<<"${release/agentops.clush.net\/resource/opspresso.com\/resource}"
 expect "a push that loses the GitHub ref lock is retried" 'cannot lock ref' "$(grep -E 'grep -qE' charts/delivery/files/commit.sh)"
 # commit.sh's commit(): an empty SOURCE removes TARGET. An emptied environment directory stays with an empty
 # resources.yaml (commit 1); PRUNE_EMPTY removes it only while it is still empty (commit 2).
