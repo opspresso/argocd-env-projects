@@ -31,15 +31,18 @@ printf '%s\n' "$documents" | jq -e -s --arg namespace "$namespace" --arg kinds "
   # The chart Service takes the resource name, and the app chart owns the name app.
   | def named: ((.metadata.name // "") | test("^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$")) and ((.metadata.namespace // $namespace) == $namespace);
     def instance: (.apiVersion | type) == "string" and (.apiVersion | startswith("kro.run/")) and ((.kind as $kind | $allowed | index($kind)) != null);
-    def release: .apiVersion == "runway.opspresso.com/v1alpha1" and .kind == "ChartRelease"
+    # Agent Runway writes group runway.agentops.clush.net and label agentops.clush.net/resource; releases before
+    # v0.94.0 wrote runway.opspresso.com and opspresso.com/resource.
+    def rid: .metadata.labels["agentops.clush.net/resource"] // .metadata.labels["opspresso.com/resource"];
+    def release: (.apiVersion == "runway.agentops.clush.net/v1alpha1" or .apiVersion == "runway.opspresso.com/v1alpha1") and .kind == "ChartRelease"
       and .metadata.name != "app"
-      and ((.metadata.labels["opspresso.com/resource"] // "") | test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))
+      and ((rid // "") | test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))
       and ((.spec.chart as $chart | $allowedCharts | index($chart)) != null)
       and ((.spec.version // "") | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
       and ((.spec.values | type) == "object")
       and (((.spec.values | keys) - ["passwordSecret", "persistence", "maxMemoryMiB", "peer"]) == []);
     # One Application per resource ID, so an ID may not repeat.
-    (map(select(.kind == "ChartRelease") | .metadata.labels["opspresso.com/resource"]?) | length) == (map(select(.kind == "ChartRelease") | .metadata.labels["opspresso.com/resource"]?) | unique | length)
+    (map(select(.kind == "ChartRelease") | rid) | length) == (map(select(.kind == "ChartRelease") | rid) | unique | length)
     and (map(.metadata.name) | length) == (map(.metadata.name) | unique | length)
     and all(.[]; type == "object" and named and (instance or release))' >/dev/null \
   || fail "The manifest must hold only uniquely named kro.run objects of kinds [$kinds] or ChartReleases of charts [$charts] in namespace $namespace"
@@ -49,6 +52,6 @@ printf '%s\n' "$documents" | jq -c 'select(.kind == "ChartRelease")' | while IFS
   name=$(printf '%s' "$release" | jq -r '.metadata.name')
   { printf '%s\n' "$header"
     printf '%s' "$release" | jq '.spec.values + {chart: .spec.chart, chartVersion: .spec.version, resourceName: .metadata.name,
-      resourceId: (.metadata.labels["opspresso.com/resource"] | gsub("-"; ""))}' | yq -p json -o yaml '.'
+      resourceId: ((.metadata.labels["agentops.clush.net/resource"] // .metadata.labels["opspresso.com/resource"]) | gsub("-"; ""))}' | yq -p json -o yaml '.'
   } > "$directory/resources/$name.yaml"
 done
