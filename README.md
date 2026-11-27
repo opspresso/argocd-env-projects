@@ -49,7 +49,7 @@ flowchart LR
 | WorkflowTemplate | 단계 | ServiceAccount | 하는 일 |
 | --- | --- | --- | --- |
 | `app-build-v2` | `checkout` | `delivery-source` | 그 commit의 소스 아카이브(`source`, S3)를 풀고 commit SHA(`revision`)를 기록한다. Agent Runway가 한 사용자의 Git 권한으로 저장소를 읽어 올린 것이며, 이 단계와 클러스터는 Git 자격 증명을 갖지 않는다. 소스에는 `.git`이 없다 |
-| `app-build-v2` | `check-application` | `delivery-runner` | `application.yaml`이 Agent Runway에 적용한 파일과 같은지 SHA-256으로 확인한다. 다르면 exit code 3이다 |
+| `app-build-v2` | `check-application` | `delivery-runner` | `application.yaml`이 Agent Runway에 적용한 파일과 같은지 SHA-256으로 확인한다. 다르면 exit code 3, 파일이 없으면 exit code 4다 |
 | `app-build-v2` | `test` | `delivery-runner` | `runtime.test.image`에서 `runtime.test.command`를 실행한다. 없으면 건너뛴다 |
 | `app-build-v2` | `build` | `delivery-runner` | 요청한 architecture의 노드에서 kaniko `--no-push`로 컨테이너 tar를 만든다. 게시 자격 증명과 AWS identity가 없다 |
 | `app-build-v2` | `build-artifact` | `delivery-runner` | 선언한 builder image와 command로 JAR/WAR를 만든다. 게시 자격 증명이 없다 |

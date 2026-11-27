@@ -224,6 +224,7 @@ expect "one resource sync runs per environment" '^resources-\{\{workflow\.parame
 expect "one deployment runs per environment" '^deploy-\{\{workflow\.parameters\.project\}\}-\{\{workflow\.parameters\.environment\}\}$' "$(line app-deploy mutexes)"
 expect "only deploy, remove, write and prune hold the deploy key, as delivery-git" '^app-deploy:deploy:delivery-git app-remove:remove:delivery-git resource-sync:write:delivery-git env-cleanup:prune:delivery-git$' "$(line all deploy-key)"
 expect "a changed declaration exits 3 for Agent Runway" 'exit 3' "$build_yaml"
+expect "a missing declaration exits 4 for Agent Runway" 'exit 4' "$build_yaml"
 expect "app-deploy-eb keeps app-deploy's step names" '^deploy verify$' "$(line app-deploy-eb tasks)"
 expect "app-deploy-eb takes the native artifact and Target" '^deployment project environment artifact application host target$' "$(line app-deploy-eb parameters)"
 expect "app-deploy-eb returns url" '^url$' "$(line app-deploy-eb outputs)"

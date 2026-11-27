@@ -171,7 +171,11 @@ spec:
         args:
           - |
             cd /work/src
-            if [ ! -f application.yaml ]; then echo "application.yaml is missing at this revision"; exit 1; fi
+            if [ ! -f application.yaml ]; then
+              echo "application.yaml is missing at this revision. Deploy a ref that has the applied file, or commit the file and apply it with project_apply."
+              # Agent Runway reports application_missing for this exit code only (agent-runway APPLICATION_MISSING_EXIT_CODE).
+              exit 4
+            fi
             actual=$(sha256sum application.yaml | cut -d' ' -f1)
             if [ "$actual" != "$APPLICATION_SHA256" ]; then
               echo "application.yaml at this revision ($actual) differs from the one applied to Agent Runway ($APPLICATION_SHA256). Apply it with project_apply and build again."
